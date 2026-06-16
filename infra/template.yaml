@@ -1,0 +1,347 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  CDC PostgreSQL to Aurora DSQL — Dashboard Infrastructure
+  Deploys: S3+CloudFront frontend, API Gateway+Lambda backend, CloudWatch Dashboard
+
+# ─── Parameters ────────────────────────────────────────────────────────────────
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+
+  EcsClusterName:
+    Type: String
+    Default: cdc-cluster
+    Description: ECS cluster running the CDC service
+
+  EcsServiceName:
+    Type: String
+    Default: cdc-pg-dsql-service
+    Description: ECS service name for the CDC task
+
+  CdcTables:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of replicated tables (for per-table metrics)
+
+  MetricNamespace:
+    Type: String
+    Default: CDC/PgToDSQL
+    Description: CloudWatch namespace for CDC metrics
+
+  LogGroupName:
+    Type: String
+    Default: /ecs/cdc-pg-dsql-service
+    Description: CloudWatch Log Group for CDC service logs
+
+# ─── Globals ───────────────────────────────────────────────────────────────────
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        METRIC_NAMESPACE: !Ref MetricNamespace
+        ECS_CLUSTER: !Ref EcsClusterName
+        ECS_SERVICE: !Ref EcsServiceName
+        AWS_REGION_NAME: !Ref AWS::Region
+        LOG_GROUP: !Ref LogGroupName
+        CDC_TABLES: !Ref CdcTables
+
+# ─── Resources ─────────────────────────────────────────────────────────────────
+
+Resources:
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # Frontend — S3 + CloudFront
+  # ═══════════════════════════════════════════════════════════════════════
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cdc-dashboard-frontend-${Environment}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
+
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub cdc-dashboard-oac-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Comment: !Sub CDC Dashboard - ${Environment}
+
+        Origins:
+          # S3 origin for frontend static files
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+
+          # API Gateway origin
+          - Id: ApiOrigin
+            DomainName: !Sub ${CdcApi}.execute-api.${AWS::Region}.amazonaws.com
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          Compress: true
+
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: https-only
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # API Layer — API Gateway + Lambda
+  # ═══════════════════════════════════════════════════════════════════════
+
+  CdcApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+
+  MetricsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub cdc-dashboard-api-${Environment}
+      Handler: lambda_metrics.lambda_handler
+      CodeUri: ../api/
+      Description: CDC Dashboard API — metrics, health, config
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            # CloudWatch read access
+            - Effect: Allow
+              Action:
+                - cloudwatch:GetMetricData
+                - cloudwatch:ListMetrics
+                - cloudwatch:DescribeAlarms
+              Resource: '*'
+            # CloudWatch Logs read access
+            - Effect: Allow
+              Action:
+                - logs:FilterLogEvents
+                - logs:GetLogEvents
+                - logs:DescribeLogStreams
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroupName}:*
+            # ECS read + update access (least privilege)
+            - Effect: Allow
+              Action:
+                - ecs:DescribeServices
+                - ecs:ListTasks
+                - ecs:DescribeTasks
+                - ecs:DescribeTaskDefinition
+                - ecs:RegisterTaskDefinition
+                - ecs:UpdateService
+              Resource:
+                - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${EcsClusterName}
+                - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${EcsClusterName}/${EcsServiceName}
+                - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/${EcsClusterName}/*
+                - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/cdc-pg-dsql*
+            # IAM pass role for task definition registration
+            - Effect: Allow
+              Action:
+                - iam:PassRole
+              Resource:
+                - !Sub arn:aws:iam::${AWS::AccountId}:role/cdc-*
+              Condition:
+                StringEquals:
+                  iam:PassedToService: ecs-tasks.amazonaws.com
+      Events:
+        GetMetrics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CdcApi
+            Path: /api/metrics
+            Method: GET
+        GetHealth:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CdcApi
+            Path: /api/health
+            Method: GET
+        PostConfig:
+          Type: Api
+          Properties:
+            RestApiId: !Ref CdcApi
+            Path: /api/config
+            Method: POST
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # CloudWatch Dashboard
+  # ═══════════════════════════════════════════════════════════════════════
+
+  CdcDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub CDC-PgToDSQL-${Environment}
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0, "y": 0, "width": 8, "height": 6,
+              "properties": {
+                "title": "Replication Lag (Bytes)",
+                "metrics": [["${MetricNamespace}", "ReplicationLagBytes"]],
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Average",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8, "y": 0, "width": 8, "height": 6,
+              "properties": {
+                "title": "Throughput (Events/Second)",
+                "metrics": [["${MetricNamespace}", "EventsAppliedPerSecond"]],
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Average",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16, "y": 0, "width": 8, "height": 6,
+              "properties": {
+                "title": "Queue Depth",
+                "metrics": [["${MetricNamespace}", "BatchQueueDepth"]],
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Average",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 6, "width": 8, "height": 6,
+              "properties": {
+                "title": "Events Applied (Cumulative)",
+                "metrics": [["${MetricNamespace}", "EventsAppliedPerSecond"]],
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Sum",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8, "y": 6, "width": 8, "height": 6,
+              "properties": {
+                "title": "Failed Events",
+                "metrics": [["${MetricNamespace}", "EventsFailed"]],
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Sum",
+                "view": "timeSeries",
+                "annotations": {
+                  "horizontal": [{"value": 1, "label": "Alert Threshold", "color": "#d13212"}]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16, "y": 6, "width": 8, "height": 6,
+              "properties": {
+                "title": "Checkpoint LSN Progress",
+                "metrics": [["${MetricNamespace}", "CheckpointLSN"]],
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Maximum",
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "text",
+              "x": 0, "y": 12, "width": 24, "height": 2,
+              "properties": {
+                "markdown": "## Service Health\nECS Cluster: `${EcsClusterName}` | Service: `${EcsServiceName}` | Namespace: `${MetricNamespace}`"
+              }
+            }
+          ]
+        }
+
+# ─── Outputs ───────────────────────────────────────────────────────────────────
+
+Outputs:
+  DashboardUrl:
+    Description: CDC Dashboard URL (CloudFront)
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+
+  ApiEndpoint:
+    Description: API Gateway endpoint
+    Value: !Sub https://${CdcApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/api
+
+  FrontendBucketName:
+    Description: S3 bucket for frontend deployment
+    Value: !Ref FrontendBucket
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID (for cache invalidation)
+    Value: !Ref CloudFrontDistribution
+
+  CloudWatchDashboard:
+    Description: CloudWatch Dashboard name
+    Value: !Sub CDC-PgToDSQL-${Environment}

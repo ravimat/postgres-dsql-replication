@@ -1,0 +1,208 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Replication Lag (Bytes)",
+        "metrics": [
+          ["CDC/PgToDSQL", "ReplicationLagBytes", {"stat": "Average", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "yAxis": {
+          "left": {"label": "Bytes", "showUnits": false}
+        },
+        "annotations": {
+          "horizontal": [
+            {"value": 10485760, "label": "10 MB Warning", "color": "#ff7f0e"},
+            {"value": 104857600, "label": "100 MB Critical", "color": "#d62728"}
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 0,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Throughput (Events/Second)",
+        "metrics": [
+          ["CDC/PgToDSQL", "EventsAppliedPerSecond", {"stat": "Average", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "yAxis": {
+          "left": {"label": "TPS", "showUnits": false, "min": 0}
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 0,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Batch Queue Depth",
+        "metrics": [
+          ["CDC/PgToDSQL", "BatchQueueDepth", {"stat": "Average", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "yAxis": {
+          "left": {"label": "Batches", "showUnits": false, "min": 0}
+        },
+        "annotations": {
+          "horizontal": [
+            {"value": 100, "label": "High Queue", "color": "#ff7f0e"}
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Events Applied (Cumulative per Period)",
+        "metrics": [
+          ["CDC/PgToDSQL", "EventsAppliedPerSecond", {"stat": "Sum", "period": 300}]
+        ],
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "yAxis": {
+          "left": {"label": "Events", "showUnits": false}
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Failed Events",
+        "metrics": [
+          ["CDC/PgToDSQL", "EventsFailed", {"stat": "Sum", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "yAxis": {
+          "left": {"label": "Failures", "showUnits": false, "min": 0}
+        },
+        "annotations": {
+          "horizontal": [
+            {"value": 1, "label": "Any Failure", "color": "#d62728"}
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "Checkpoint LSN Progress",
+        "metrics": [
+          ["CDC/PgToDSQL", "CheckpointLSN", {"stat": "Maximum", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "timeSeries",
+        "stacked": false,
+        "yAxis": {
+          "left": {"label": "LSN (numeric)", "showUnits": false}
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 12,
+      "width": 6,
+      "height": 3,
+      "properties": {
+        "title": "Current Replication Lag",
+        "metrics": [
+          ["CDC/PgToDSQL", "ReplicationLagBytes", {"stat": "Average", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "singleValue",
+        "sparkline": true
+      }
+    },
+    {
+      "type": "metric",
+      "x": 6,
+      "y": 12,
+      "width": 6,
+      "height": 3,
+      "properties": {
+        "title": "Current TPS",
+        "metrics": [
+          ["CDC/PgToDSQL", "EventsAppliedPerSecond", {"stat": "Average", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "singleValue",
+        "sparkline": true
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 12,
+      "width": 6,
+      "height": 3,
+      "properties": {
+        "title": "Total Failures (1h)",
+        "metrics": [
+          ["CDC/PgToDSQL", "EventsFailed", {"stat": "Sum", "period": 3600}]
+        ],
+        "region": "us-east-1",
+        "view": "singleValue",
+        "sparkline": true
+      }
+    },
+    {
+      "type": "metric",
+      "x": 18,
+      "y": 12,
+      "width": 6,
+      "height": 3,
+      "properties": {
+        "title": "Queue Depth (Current)",
+        "metrics": [
+          ["CDC/PgToDSQL", "BatchQueueDepth", {"stat": "Average", "period": 60}]
+        ],
+        "region": "us-east-1",
+        "view": "singleValue",
+        "sparkline": true
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 15,
+      "width": 24,
+      "height": 2,
+      "properties": {
+        "markdown": "## CDC Pipeline — PostgreSQL → Aurora DSQL\n**Namespace:** `CDC/PgToDSQL` | **Service:** `cdc-pg-dsql-service` | **Cluster:** `cdc-cluster`\n\n[Open Web Dashboard](https://your-cloudfront-domain.cloudfront.net) | [ECS Console](https://console.aws.amazon.com/ecs)"
+      }
+    }
+  ]
+}

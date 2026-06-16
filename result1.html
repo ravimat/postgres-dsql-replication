@@ -1,0 +1,211 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="Content-Style-Type" content="text/css">
+  <title></title>
+  <meta name="Generator" content="Cocoa HTML Writer">
+  <meta name="CocoaVersion" content="2685.6">
+  <style type="text/css">
+    body {background-color: #0d0e12}
+    p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; font: 13.0px Menlo; color: #000000}
+    p.p2 {margin: 0.0px 0.0px 0.0px 0.0px; font: 13.0px Menlo; color: #000000; min-height: 15.0px}
+    span.s1 {font-variant-ligatures: no-common-ligatures}
+    span.s2 {font: 13.0px 'Apple Color Emoji'; font-variant-ligatures: no-common-ligatures}
+  </style>
+</head>
+<body>
+<p class="p1"><span class="s1">&lt;!DOCTYPE html&gt;</span></p>
+<p class="p1"><span class="s1">&lt;html lang="en"&gt;</span></p>
+<p class="p1"><span class="s1">&lt;head&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;meta charset="UTF-8"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;title&gt;CDC Load Test Report — 2026-06-16 02:33&lt;/title&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;script src="https://cdn.jsdelivr.net/npm/chart.js@4"&gt;&lt;/script&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;style&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>* { margin: 0; padding: 0; box-sizing: border-box; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;<span class="Apple-converted-space"> </span></span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">               </span>background: #0f1117; color: #e4e4e7; padding: 2rem; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.container { max-width: 1200px; margin: 0 auto; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>h1 { font-size: 2rem; margin-bottom: 0.5rem; color: #fff; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>h2 { font-size: 1.3rem; margin: 2rem 0 1rem; color: #a1a1aa; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.subtitle { color: #71717a; margin-bottom: 2rem; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1.5rem 0; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.card { background: #1c1c22; border: 1px solid #27272a; border-radius: 12px; padding: 1.5rem; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.card .label { font-size: 0.8rem; color: #71717a; text-transform: uppercase; letter-spacing: 0.05em; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.card .value { font-size: 1.8rem; font-weight: 700; margin-top: 0.3rem; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.card .value.green { color: #4ade80; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.card .value.red { color: #f87171; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.card .value.blue { color: #60a5fa; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.card .value.yellow { color: #fbbf24; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.chart-container { background: #1c1c22; border: 1px solid #27272a; border-radius: 12px; padding: 1.5rem; margin: 1.5rem 0; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>canvas { max-height: 300px; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>table { width: 100%; border-collapse: collapse; margin: 1rem 0; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid #27272a; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>th { color: #a1a1aa; font-size: 0.8rem; text-transform: uppercase; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.badge-pass { background: #064e3b; color: #4ade80; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.badge-fail { background: #450a0a; color: #f87171; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.config-item { font-size: 0.9rem; color: #a1a1aa; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>.config-item strong { color: #e4e4e7; }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;/style&gt;</span></p>
+<p class="p1"><span class="s1">&lt;/head&gt;</span></p>
+<p class="p1"><span class="s1">&lt;body&gt;</span></p>
+<p class="p1"><span class="s1">&lt;div class="container"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;h1&gt;</span><span class="s2">🔄</span><span class="s1"> CDC Load Test Report&lt;/h1&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;p class="subtitle"&gt;PostgreSQL → Aurora DSQL | June 16, 2026 at 02:33&lt;/p&gt;</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;!-- Summary Cards --&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;div class="grid"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;Total Transactions&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value blue"&gt;5,929&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;Rows Written&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value blue"&gt;0&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;Average TPS&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value green"&gt;0.0&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;Peak TPS&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value green"&gt;62&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;Failed Transactions&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value red"&gt;5929&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;Avg Replication Lag&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value yellow"&gt;302.13ms&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;P95 Lag&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value yellow"&gt;246.03ms&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="card"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="label"&gt;Duration&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;div class="value"&gt;120.05s&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;!-- TPS Over Time Chart --&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;h2&gt;</span><span class="s2">📈</span><span class="s1"> Throughput (TPS) Over Time&lt;/h2&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;div class="chart-container"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;canvas id="tpsChart"&gt;&lt;/canvas&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;!-- Replication Lag Chart --&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;h2&gt;</span><span class="s2">⏱️</span><span class="s1"> Replication Lag Over Time&lt;/h2&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;div class="chart-container"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;canvas id="lagChart"&gt;&lt;/canvas&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;!-- Latency Table --&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;h2&gt;</span><span class="s2">📊</span><span class="s1"> Transaction Latency (Source Write)&lt;/h2&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;table&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;th&gt;Metric&lt;/th&gt;&lt;th&gt;Value&lt;/th&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;td&gt;Min&lt;/td&gt;&lt;td&gt;0 ms&lt;/td&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;td&gt;Average&lt;/td&gt;&lt;td&gt;0 ms&lt;/td&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;td&gt;Median (P50)&lt;/td&gt;&lt;td&gt;0 ms&lt;/td&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;td&gt;P95&lt;/td&gt;&lt;td&gt;0 ms&lt;/td&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;td&gt;P99&lt;/td&gt;&lt;td&gt;0 ms&lt;/td&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;td&gt;Max&lt;/td&gt;&lt;td&gt;0 ms&lt;/td&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;/table&gt;</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;!-- Integrity Results --&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;h2&gt;</span><span class="s2">✅</span><span class="s1"> Data Integrity Validation&lt;/h2&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;table&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;&lt;th&gt;Check&lt;/th&gt;&lt;th&gt;Source&lt;/th&gt;&lt;th&gt;Target&lt;/th&gt;&lt;th&gt;Status&lt;/th&gt;&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;Row Count&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;14846&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;14846&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;&lt;span class="badge badge-pass"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">                </span>PASS&lt;/span&gt;&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;Checksum (SUM)&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;604258511.24&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;604258511.24&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;&lt;span class="badge badge-pass"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">                </span>PASS&lt;/span&gt;&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;Sample Match&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td colspan="2"&gt;100/100 rows&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>&lt;td&gt;&lt;span class="badge badge-pass"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">                </span>100.0%&lt;/span&gt;&lt;/td&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;/tr&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;/table&gt;</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;!-- Config --&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;h2&gt;</span><span class="s2">⚙️</span><span class="s1"> Test Configuration&lt;/h2&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;div class="config-grid"&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="config-item"&gt;&lt;strong&gt;Mode:&lt;/strong&gt; mixed&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="config-item"&gt;&lt;strong&gt;Target TPS:&lt;/strong&gt; 50&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="config-item"&gt;&lt;strong&gt;Threads:&lt;/strong&gt; 4&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="config-item"&gt;&lt;strong&gt;Batch Size:&lt;/strong&gt; 10 rows/txn&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="config-item"&gt;&lt;strong&gt;Duration:&lt;/strong&gt; 120s&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>&lt;div class="config-item"&gt;&lt;strong&gt;Table:&lt;/strong&gt; cdc_load_test&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</span></p>
+<p class="p1"><span class="s1">&lt;/div&gt;</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1">&lt;script&gt;</span></p>
+<p class="p1"><span class="s1">// TPS Chart</span></p>
+<p class="p1"><span class="s1">new Chart(document.getElementById('tpsChart'), {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>type: 'line',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>data: {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "110", "111", "112", "113", "114", "115", "116", "117", "118", "119", "120"],</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>datasets: [{</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>label: 'Transactions Per Second',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>data: [47, 39, 47, 62, 50, 49, 49, 50, 49, 49, 50, 49, 50, 49, 50, 49, 50, 49, 50, 49, 50, 49, 49, 46, 53, 49, 50, 49, 50, 49, 50, 49, 50, 49, 50, 49, 50, 49, 49, 50, 49, 46, 53, 49, 39, 59, 49, 50, 49, 50, 49, 50, 49, 46, 52, 50, 49, 50, 49, 50, 49, 48, 50, 50, 49, 50, 49, 50, 49, 49, 50, 50, 49, 50, 49, 49, 50, 50, 49, 50, 49, 50, 49, 50, 49, 50, 49, 50, 49, 49, 50, 49, 50, 49, 50, 49, 50, 49, 46, 52, 50, 49, 49, 50, 49, 50, 49, 50, 49, 50, 49, 50, 49, 49, 50, 50, 49, 49, 50, 49, 1],</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>borderColor: '#4ade80',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>backgroundColor: 'rgba(74, 222, 128, 0.1)',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>fill: true,</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>tension: 0.3,</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>pointRadius: 0,</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>}]</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>},</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>options: {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>responsive: true,</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>plugins: { legend: { labels: { color: '#a1a1aa' } } },</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>scales: {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>x: { title: { display: true, text: 'Seconds', color: '#71717a' },<span class="Apple-converted-space"> </span></span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">                  </span>ticks: { color: '#71717a', maxTicksLimit: 20 }, grid: { color: '#27272a' } },</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>y: { title: { display: true, text: 'TPS', color: '#71717a' },</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">                  </span>ticks: { color: '#71717a' }, grid: { color: '#27272a' } }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>}</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>}</span></p>
+<p class="p1"><span class="s1">});</span></p>
+<p class="p2"><span class="s1"></span><br></p>
+<p class="p1"><span class="s1">// Lag Chart</span></p>
+<p class="p1"><span class="s1">new Chart(document.getElementById('lagChart'), {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>type: 'scatter',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>data: {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>datasets: [{</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>label: 'Replication Lag (ms)',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>data: [{"x": -0.0, "y": 2171.6}, {"x": 7.2, "y": 239.9}, {"x": 12.4, "y": 206.8}, {"x": 17.6, "y": 210.1}, {"x": 22.8, "y": 219.3}, {"x": 28.1, "y": 215.0}, {"x": 33.3, "y": 207.2}, {"x": 38.5, "y": 208.0}, {"x": 43.7, "y": 230.1}, {"x": 48.9, "y": 206.7}, {"x": 54.1, "y": 224.6}, {"x": 59.4, "y": 207.4}, {"x": 64.6, "y": 221.0}, {"x": 69.8, "y": 246.0}, {"x": 75.0, "y": 220.9}, {"x": 80.3, "y": 218.2}, {"x": 85.5, "y": 200.6}, {"x": 90.7, "y": 221.9}, {"x": 95.9, "y": 228.2}, {"x": 101.1, "y": 205.4}, {"x": 106.3, "y": 207.6}, {"x": 111.6, "y": 207.3}, {"x": 116.8, "y": 225.2}],</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>borderColor: '#fbbf24',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>backgroundColor: 'rgba(251, 191, 36, 0.5)',</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>pointRadius: 4,</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>}]</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>},</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>options: {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>responsive: true,</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>plugins: { legend: { labels: { color: '#a1a1aa' } } },</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>scales: {</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>x: { title: { display: true, text: 'Seconds Since Start', color: '#71717a' },</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">                  </span>ticks: { color: '#71717a' }, grid: { color: '#27272a' } },</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">            </span>y: { title: { display: true, text: 'Lag (ms)', color: '#71717a' },</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">                  </span>ticks: { color: '#71717a' }, grid: { color: '#27272a' } }</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">        </span>}</span></p>
+<p class="p1"><span class="s1"><span class="Apple-converted-space">    </span>}</span></p>
+<p class="p1"><span class="s1">});</span></p>
+<p class="p1"><span class="s1">&lt;/script&gt;</span></p>
+<p class="p1"><span class="s1">&lt;/body&gt;</span></p>
+<p class="p1"><span class="s1">&lt;/html&gt;</span></p>
+</body>
+</html>

@@ -1,0 +1,29 @@
+# SAM CLI configuration file
+# Deploy with: sam deploy --guided (first time) or sam deploy (subsequent)
+
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "cdc-dashboard"
+resolve_s3 = true
+s3_prefix = "cdc-dashboard"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=prod EcsClusterName=cdc-cluster EcsServiceName=cdc-pg-dsql-service"
+disable_rollback = false
+
+[default.build.parameters]
+use_container = false
+
+[default.validate.parameters]
+lint = true
+
+[dev.deploy.parameters]
+stack_name = "cdc-dashboard-dev"
+resolve_s3 = true
+s3_prefix = "cdc-dashboard-dev"
+region = "us-east-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=dev EcsClusterName=cdc-cluster-dev EcsServiceName=cdc-pg-dsql-service-dev"

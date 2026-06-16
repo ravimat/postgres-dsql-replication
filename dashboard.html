@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>PostgreSQL → Aurora DSQL CDC Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/highcharts@12.1.2/highcharts.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highcharts@12.1.2/highcharts-more.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highcharts@12.1.2/modules/solid-gauge.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highcharts@12.1.2/modules/accessibility.js"></script>
+<style>
+:root {
+  --color-bg: #0f1117;
+  --color-bg-secondary: #1c1c22;
+  --color-text: #e4e4e7;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+  --color-border-light: #27272a;
+  --color-border: #3f3f46;
+  --color-surface: #27272a;
+  --color-primary: #60a5fa;
+  --color-success: #4ade80;
+  --color-error: #f87171;
+  --color-warning: #fbbf24;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', Consolas, monospace;
+  --radius-md: 8px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--color-bg); font-family: var(--font-sans); color: var(--color-text); padding: 24px; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; font-weight: 700; }
+.subtitle { color: var(--color-text-muted); font-size: 0.85rem; margin-bottom: 20px; }
+.status-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding: 12px 16px; background: var(--color-bg-secondary); border-radius: 8px; border: 1px solid var(--color-border-light); }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; }
+.status-dot.healthy { background: var(--color-success); box-shadow: 0 0 8px var(--color-success); animation: pulse 2s infinite; }
+.status-dot.unhealthy { background: var(--color-error); box-shadow: 0 0 8px var(--color-error); }
+.status-dot.disconnected { background: var(--color-text-muted); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+.status-text { font-size: 0.85rem; font-weight: 500; }
+.status-meta { margin-left: auto; font-size: 0.75rem; color: var(--color-text-muted); font-family: var(--font-mono); }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+@media (max-width: 800px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+.card { background: var(--color-bg-secondary); border: 1px solid var(--color-border-light); border-radius: 8px; padding: 16px; }
+.card .label { font-size: 0.7rem; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.card .value { font-size: 1.6rem; font-weight: 700; font-family: var(--font-mono); }
+.card .delta { font-size: 0.75rem; margin-top: 2px; }
+.card .delta.good { color: var(--color-success); }
+.card .delta.bad { color: var(--color-error); }
+.card .delta.warn { color: var(--color-warning); }
+.charts-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 800px) { .charts-row { grid-template-columns: 1fr; } }
+.chart-card { background: var(--color-bg-secondary); border: 1px solid var(--color-border-light); border-radius: 8px; padding: 16px; }
+.config-section { margin-top: 20px; background: var(--color-bg-secondary); border: 1px solid var(--color-border-light); border-radius: 8px; padding: 16px; }
+.config-section h3 { font-size: 0.85rem; margin: 0 0 12px; color: var(--color-text-secondary); }
+.config-form { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 12px; align-items: end; }
+@media (max-width: 800px) { .config-form { grid-template-columns: 1fr; } }
+.config-form label { font-size: 0.7rem; color: var(--color-text-muted); display: block; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
+.config-form input, .config-form select { width: 100%; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); color: var(--color-text); font-size: 0.85rem; font-family: var(--font-mono); }
+.config-form input:focus, .config-form select:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 2px rgba(96,165,250,0.2); }
+.btn { padding: 8px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; transition: all 0.15s; }
+.btn-primary { background: var(--color-primary); color: #fff; }
+.btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+.btn-stop { background: var(--color-error); color: #fff; }
+.btn-stop:hover { opacity: 0.85; }
+.table-section { margin-top: 20px; background: var(--color-bg-secondary); border: 1px solid var(--color-border-light); border-radius: 8px; overflow: hidden; }
+.table-section h3 { font-size: 0.85rem; padding: 16px 16px 0; color: var(--color-text-secondary); }
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th { text-align: left; color: var(--color-text-muted); font-weight: 500; padding: 12px 16px; border-bottom: 1px solid var(--color-border); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; }
+td { padding: 10px 16px; color: var(--color-text); border-bottom: 1px solid var(--color-border-light); font-family: var(--font-mono); font-size: 0.8rem; }
+tr:last-child td { border-bottom: none; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: 100px; font-size: 0.7rem; font-weight: 600; }
+.badge-success { background: rgba(74,222,128,0.15); color: #4ade80; }
+.badge-error { background: rgba(248,113,113,0.15); color: #f87171; }
+.badge-warning { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.badge-idle { background: rgba(113,113,122,0.15); color: #a1a1aa; }
+.log-section { margin-top: 16px; background: var(--color-bg-secondary); border: 1px solid var(--color-border-light); border-radius: 8px; padding: 16px; }
+.log-section h3 { font-size: 0.85rem; margin-bottom: 8px; color: var(--color-text-secondary); }
+.log-entries { max-height: 150px; overflow-y: auto; font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-text-muted); line-height: 1.8; }
+.log-entry { padding: 2px 0; border-bottom: 1px solid var(--color-border-light); }
+.log-time { color: var(--color-text-muted); margin-right: 8px; }
+.log-ok { color: var(--color-success); }
+.log-err { color: var(--color-error); }
+</style>
+</head>
+<body>
+<h1>🔄 PostgreSQL → Aurora DSQL CDC Dashboard</h1>
+<p class="subtitle">Real-time replication monitoring & control panel</p>
+
+<div class="status-bar">
+  <div class="status-dot disconnected" id="statusDot"></div>
+  <span class="status-text" id="statusText">Not connected — enter endpoint below</span>
+  <span class="status-meta" id="statusMeta"></span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Events Applied</div>
+    <div class="value" id="eventsApplied">—</div>
+    <div class="delta good" id="eventsDelta"></div>
+  </div>
+  <div class="card">
+    <div class="label">Replication Lag</div>
+    <div class="value" id="lagValue">—</div>
+    <div class="delta" id="lagDelta"></div>
+  </div>
+  <div class="card">
+    <div class="label">Events Failed</div>
+    <div class="value" id="eventsFailed">—</div>
+    <div class="delta" id="failedDelta"></div>
+  </div>
+  <div class="card">
+    <div class="label">Queue Depth</div>
+    <div class="value" id="queueDepth">—</div>
+    <div class="delta" id="queueDelta"></div>
+  </div>
+</div>
+
+<div class="charts-row">
+  <div class="chart-card"><div id="tpsChart" style="height: 260px;"></div></div>
+  <div class="chart-card"><div id="lagGauge" style="height: 260px;"></div></div>
+</div>
+
+<div class="config-section">
+  <h3>⚙️ Connection Settings</h3>
+  <div class="config-form">
+    <div><label>CDC Health Endpoint</label><input type="text" id="healthUrl" value="http://localhost:8081/health" placeholder="http://host:port/health" /></div>
+    <div><label>Refresh (sec)</label><input type="number" id="refreshInterval" value="3" min="1" max="60" /></div>
+    <div><label>Conflict Mode</label>
+      <select id="conflictMode">
+        <option value="upsert">upsert</option>
+        <option value="skip">skip</option>
+        <option value="fail">fail</option>
+        <option value="last_write_wins">last_write_wins</option>
+      </select>
+    </div>
+    <div><button class="btn btn-primary" id="connectBtn" onclick="togglePolling()">▶ Connect</button></div>
+  </div>
+</div>
+
+<div class="log-section">
+  <h3>📋 Event Log</h3>
+  <div class="log-entries" id="logEntries">
+    <div class="log-entry"><span class="log-time">--:--:--</span> Waiting for connection...</div>
+  </div>
+</div>
+
+<script>
+// Charts setup
+const tpsChart = Highcharts.chart('tpsChart', {
+  chart: { type: 'areaspline', backgroundColor: 'transparent', animation: false, style: { fontFamily: 'inherit' } },
+  title: { text: 'Throughput (Events/s)', style: { color: '#e4e4e7', fontSize: '13px', fontWeight: '600' } },
+  xAxis: { type: 'datetime', labels: { style: { color: '#71717a', fontSize: '10px' } }, lineColor: '#27272a', tickColor: 'transparent', gridLineWidth: 0 },
+  yAxis: { title: { text: null }, labels: { style: { color: '#71717a', fontSize: '10px' } }, gridLineColor: '#27272a', min: 0 },
+  tooltip: { backgroundColor: '#27272a', borderColor: '#3f3f46', style: { color: '#e4e4e7' }, xDateFormat: '%H:%M:%S', valueSuffix: ' events/s' },
+  plotOptions: { areaspline: { fillOpacity: 0.1, marker: { enabled: false }, lineWidth: 2.5 } },
+  series: [{ name: 'Events/s', data: [], color: '#60a5fa' }],
+  legend: { enabled: false },
+  credits: { enabled: false },
+});
+
+const lagGauge = Highcharts.chart('lagGauge', {
+  chart: { type: 'solidgauge', backgroundColor: 'transparent' },
+  title: { text: 'Lag (KB)', style: { color: '#e4e4e7', fontSize: '13px', fontWeight: '600' } },
+  pane: { startAngle: -90, endAngle: 90, center: ['50%', '75%'], size: '120%', background: [{ innerRadius: '60%', outerRadius: '100%', shape: 'arc', backgroundColor: '#27272a', borderWidth: 0 }] },
+  yAxis: { min: 0, max: 1024, lineWidth: 0, tickWidth: 0, minorTickInterval: null, labels: { enabled: false }, stops: [[0.2, '#4ade80'], [0.5, '#fbbf24'], [0.8, '#f87171']] },
+  series: [{ name: 'Lag', data: [0], dataLabels: { format: '<div style="text-align:center"><span style="font-size:1.8em;font-weight:700;color:#e4e4e7;font-family:monospace">{y}</span><br/><span style="font-size:0.75em;color:#71717a">KB</span></div>', borderWidth: 0, y: -25, useHTML: true } }],
+  tooltip: { enabled: false },
+  credits: { enabled: false },
+});
+
+// State
+let pollInterval = null;
+let lastEventsApplied = 0;
+let lastPollTime = Date.now();
+let isConnected = false;
+
+function togglePolling() {
+  if (isConnected) {
+    stopPolling();
+  } else {
+    startPolling();
+  }
+}
+
+function startPolling() {
+  const url = document.getElementById('healthUrl').value;
+  const interval = parseInt(document.getElementById('refreshInterval').value) * 1000;
+  pollInterval = setInterval(() => fetchHealth(url), interval);
+  fetchHealth(url);
+  isConnected = true;
+  document.getElementById('connectBtn').textContent = '⏹ Disconnect';
+  document.getElementById('connectBtn').className = 'btn btn-stop';
+  addLog('Connecting to ' + url + '...', 'ok');
+}
+
+function stopPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = null;
+  isConnected = false;
+  document.getElementById('connectBtn').textContent = '▶ Connect';
+  document.getElementById('connectBtn').className = 'btn btn-primary';
+  document.getElementById('statusDot').className = 'status-dot disconnected';
+  document.getElementById('statusText').textContent = 'Disconnected';
+  addLog('Disconnected', 'err');
+}
+
+async function fetchHealth(url) {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    updateDashboard(data);
+  } catch (e) {
+    document.getElementById('statusDot').className = 'status-dot unhealthy';
+    document.getElementById('statusText').textContent = 'Error — ' + e.message;
+    addLog('Connection error: ' + e.message, 'err');
+  }
+}
+
+function updateDashboard(data) {
+  const now = Date.now();
+  const elapsed = (now - lastPollTime) / 1000;
+  const eventsPerSec = elapsed > 0 && lastEventsApplied > 0 ? Math.round((data.events_applied - lastEventsApplied) / elapsed) : 0;
+
+  // Status bar
+  document.getElementById('statusDot').className = 'status-dot ' + (data.healthy ? 'healthy' : 'unhealthy');
+  document.getElementById('statusText').textContent = data.healthy ? 'Healthy — Streaming' : '⚠️ Unhealthy';
+  document.getElementById('statusMeta').textContent = 
+    'Plugin: ' + data.plugin + ' | Mode: ' + data.conflict_mode + ' | Uptime: ' + formatDuration(data.uptime_seconds);
+
+  // Metric cards
+  document.getElementById('eventsApplied').textContent = data.events_applied.toLocaleString();
+  document.getElementById('eventsDelta').textContent = eventsPerSec > 0 ? '↑ ' + eventsPerSec + '/s' : 'idle';
+  document.getElementById('eventsDelta').className = 'delta ' + (eventsPerSec > 0 ? 'good' : '');
+
+  const lagKB = Math.round(data.lag_bytes / 1024);
+  document.getElementById('lagValue').textContent = data.lag_bytes === 0 ? '0' : lagKB + ' KB';
+  document.getElementById('lagDelta').textContent = data.lag_bytes === 0 ? '✓ Caught up' : data.lag_mb + ' MB pending';
+  document.getElementById('lagDelta').className = 'delta ' + (data.lag_bytes === 0 ? 'good' : 'warn');
+
+  document.getElementById('eventsFailed').textContent = data.events_failed.toLocaleString();
+  document.getElementById('failedDelta').textContent = data.events_failed === 0 ? 'No errors' : '⚠ Check logs';
+  document.getElementById('failedDelta').className = 'delta ' + (data.events_failed === 0 ? 'good' : 'bad');
+
+  document.getElementById('queueDepth').textContent = data.queue_depth.toLocaleString();
+  document.getElementById('queueDelta').textContent = data.queue_depth === 0 ? 'Empty' : 'Processing...';
+  document.getElementById('queueDelta').className = 'delta ' + (data.queue_depth === 0 ? 'good' : 'warn');
+
+  // TPS chart
+  if (eventsPerSec >= 0 && lastEventsApplied > 0) {
+    tpsChart.series[0].addPoint([now, eventsPerSec], true, tpsChart.series[0].data.length > 120);
+  }
+
+  // Lag gauge
+  lagGauge.series[0].points[0].update(Math.min(lagKB, 1024));
+
+  // Log
+  if (eventsPerSec > 0) {
+    addLog('Applied ' + eventsPerSec + ' events/s | lag: ' + lagKB + ' KB | queue: ' + data.queue_depth, 'ok');
+  }
+
+  lastEventsApplied = data.events_applied;
+  lastPollTime = now;
+}
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+function addLog(message, type) {
+  const container = document.getElementById('logEntries');
+  const now = new Date().toLocaleTimeString();
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.innerHTML = '<span class="log-time">' + now + '</span><span class="log-' + type + '">' + message + '</span>';
+  container.insertBefore(entry, container.firstChild);
+  if (container.children.length > 50) container.removeChild(container.lastChild);
+}
+</script>
+</body>
+</html>

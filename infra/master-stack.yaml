@@ -1,0 +1,802 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  PostgreSQL to Aurora DSQL CDC Replication - One-Click Deployment
+  Deploys the full CDC solution from a GitHub repository:
+  - ECS Fargate CDC service (24/7 streaming replication)
+  - CloudFront + S3 monitoring dashboard
+  - API Gateway + Lambda metrics proxy
+  - CloudWatch Dashboard with replication metrics
+  - CodePipeline CI/CD (auto-deploys on git push)
+
+Parameters:
+  # --- Source Code ---
+  GitHubConnectionArn:
+    Type: String
+    Description: ARN of the CodeStar Connection to GitHub (create in console first)
+  
+  GitHubRepoOwner:
+    Type: String
+    Description: GitHub repository owner (user or org)
+  
+  GitHubRepoName:
+    Type: String
+    Description: GitHub repository name
+  
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch to deploy from
+
+  # --- Database Config ---
+  SourceDSN:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL source connection string (e.g., host=xxx port=5432 dbname=xxx user=xxx password=xxx sslmode=require)
+  
+  TargetDSQLEndpoint:
+    Type: String
+    Description: Aurora DSQL cluster endpoint (e.g., xxx.dsql.us-east-1.on.aws)
+  
+  DSQLRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS region of the DSQL cluster
+  
+  ConflictMode:
+    Type: String
+    Default: upsert
+    AllowedValues: [upsert, skip, fail, last_write_wins]
+    Description: How to handle conflicts on the target
+
+  SlotName:
+    Type: String
+    Default: dsql_cdc_slot
+    Description: PostgreSQL logical replication slot name
+
+  DecodingPlugin:
+    Type: String
+    Default: test_decoding
+    AllowedValues: [test_decoding, pgoutput]
+    Description: Logical decoding plugin
+
+  BatchSize:
+    Type: Number
+    Default: 1000
+    Description: Events per batch
+
+  ParallelWorkers:
+    Type: Number
+    Default: 4
+    Description: Parallel DSQL writer threads
+
+  # --- Networking ---
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC with connectivity to source PG and DSQL
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets for ECS tasks
+
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group allowing outbound to PG (5432) and DSQL
+
+Resources:
+  # ==========================================================================
+  # SECRETS
+  # ==========================================================================
+  SourceDSNSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}/source-dsn
+      SecretString: !Ref SourceDSN
+
+  # ==========================================================================
+  # ECR REPOSITORY
+  # ==========================================================================
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${AWS::StackName}-cdc
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}
+
+  # ==========================================================================
+  # ECS CLUSTER + SERVICE
+  # ==========================================================================
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${AWS::StackName}-cluster
+      CapacityProviders: [FARGATE]
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CDCTaskPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - dsql:DbConnectAdmin
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref SourceDSNSecret
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub ${CDCArchiveBucket.Arn}/*
+
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref SourceDSNSecret
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-cdc
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '1024'
+      Memory: '2048'
+      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: cdc-worker
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          HealthCheck:
+            Command: [CMD-SHELL, "curl -f http://localhost:8080/health || exit 1"]
+            Interval: 15
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+          Environment:
+            - Name: SLOT_NAME
+              Value: !Ref SlotName
+            - Name: DECODING_PLUGIN
+              Value: !Ref DecodingPlugin
+            - Name: CONFLICT_MODE
+              Value: !Ref ConflictMode
+            - Name: BATCH_SIZE
+              Value: !Sub ${BatchSize}
+            - Name: PARALLEL_WORKERS
+              Value: !Sub ${ParallelWorkers}
+            - Name: HEALTH_PORT
+              Value: '8080'
+            - Name: METRICS_ENABLED
+              Value: 'true'
+            - Name: TARGET_DSN
+              Value: !Sub "host=${TargetDSQLEndpoint} port=5432 dbname=postgres user=admin sslmode=require"
+            - Name: DSQL_HOSTNAME
+              Value: !Ref TargetDSQLEndpoint
+            - Name: DSQL_REGION
+              Value: !Ref DSQLRegion
+            - Name: S3_BUCKET
+              Value: !Ref CDCArchiveBucket
+          Secrets:
+            - Name: SOURCE_DSN
+              ValueFrom: !Ref SourceDSNSecret
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: cdc
+          StopTimeout: 60
+          LinuxParameters:
+            InitProcessEnabled: true
+
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${AWS::StackName}-cdc
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ECSTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref SecurityGroupId]
+          AssignPublicIp: DISABLED
+      EnableExecuteCommand: true
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${AWS::StackName}-cdc
+      RetentionInDays: 30
+
+  # ==========================================================================
+  # S3 BUCKETS
+  # ==========================================================================
+  CDCArchiveBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-archive-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToIA
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+          - Id: Expire
+            Status: Enabled
+            ExpirationInDays: 90
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-dashboard-${AWS::AccountId}
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: CloudFrontAccess
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
+
+  # ==========================================================================
+  # CLOUDFRONT
+  # ==========================================================================
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref CloudFrontOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+          - Id: APIOrigin
+            DomainName: !Sub ${MetricsAPI}.execute-api.${AWS::Region}.amazonaws.com
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: APIOrigin
+            ViewerProtocolPolicy: https-only
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
+        PriceClass: PriceClass_100
+
+  # ==========================================================================
+  # API GATEWAY + LAMBDA (Metrics Proxy)
+  # ==========================================================================
+  MetricsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudWatchRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - ecs:DescribeServices
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                Resource: '*'
+
+  MetricsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-metrics-api
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt MetricsLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          CW_NAMESPACE: CDC/PgToDSQL
+          ECS_CLUSTER: !Ref ECSCluster
+          ECS_SERVICE: !Sub ${AWS::StackName}-cdc
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          from datetime import datetime, timedelta, timezone
+
+          cw = boto3.client('cloudwatch')
+          ecs = boto3.client('ecs')
+          NAMESPACE = os.environ.get('CW_NAMESPACE', 'CDC/PgToDSQL')
+
+          def handler(event, context):
+              path = event.get('rawPath', event.get('path', '/'))
+              
+              if '/health' in path:
+                  return get_health()
+              elif '/metrics' in path:
+                  return get_metrics()
+              else:
+                  return response(200, {'status': 'ok', 'endpoints': ['/api/health', '/api/metrics']})
+
+          def get_metrics():
+              end = datetime.now(timezone.utc)
+              start = end - timedelta(hours=1)
+              
+              result = cw.get_metric_data(
+                  MetricDataQueries=[
+                      metric_query('lag', 'ReplicationLagBytes', 'Average'),
+                      metric_query('events', 'EventsAppliedPerMinute', 'Sum'),
+                      metric_query('failed', 'EventsFailed', 'Sum'),
+                      metric_query('queue', 'BatchQueueDepth', 'Average'),
+                  ],
+                  StartTime=start,
+                  EndTime=end,
+              )
+              
+              metrics = {}
+              for r in result['MetricDataResults']:
+                  metrics[r['Id']] = {
+                      'timestamps': [t.isoformat() for t in r['Timestamps']],
+                      'values': r['Values'],
+                  }
+              
+              return response(200, metrics)
+
+          def get_health():
+              try:
+                  cluster = os.environ['ECS_CLUSTER']
+                  service = os.environ['ECS_SERVICE']
+                  svc = ecs.describe_services(cluster=cluster, services=[service])
+                  s = svc['services'][0]
+                  return response(200, {
+                      'status': s['status'],
+                      'running_count': s['runningCount'],
+                      'desired_count': s['desiredCount'],
+                      'deployments': len(s['deployments']),
+                  })
+              except Exception as e:
+                  return response(500, {'error': str(e)})
+
+          def metric_query(id, name, stat):
+              return {
+                  'Id': id,
+                  'MetricStat': {
+                      'Metric': {'Namespace': NAMESPACE, 'MetricName': name},
+                      'Period': 60,
+                      'Stat': stat,
+                  },
+              }
+
+          def response(code, body):
+              return {
+                  'statusCode': code,
+                  'headers': {
+                      'Content-Type': 'application/json',
+                      'Access-Control-Allow-Origin': '*',
+                  },
+                  'body': json.dumps(body, default=str),
+              }
+
+  MetricsAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-api
+      ProtocolType: HTTP
+
+  MetricsAPIIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref MetricsAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt MetricsLambda.Arn
+      PayloadFormatVersion: '2.0'
+
+  MetricsAPIRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref MetricsAPI
+      RouteKey: GET /api/{proxy+}
+      Target: !Sub integrations/${MetricsAPIIntegration}
+
+  MetricsAPIStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref MetricsAPI
+      StageName: $default
+      AutoDeploy: true
+
+  MetricsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MetricsLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${MetricsAPI}/*
+
+  # ==========================================================================
+  # CODEPIPELINE CI/CD
+  # ==========================================================================
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-artifacts-${AWS::AccountId}
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:BatchGetImage
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub ${ArtifactBucket.Arn}/*
+                  - !Sub ${FrontendBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                Resource: '*'
+
+  CodeBuildBackend:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AWS::StackName}-build-backend
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: ECR_REPO
+            Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}
+          - Name: AWS_REGION_VAL
+            Value: !Ref AWS::Region
+          - Name: ECS_CLUSTER
+            Value: !Ref ECSCluster
+          - Name: ECS_SERVICE
+            Value: !Sub ${AWS::StackName}-cdc
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to ECR...
+                - aws ecr get-login-password --region $AWS_REGION_VAL | docker login --username AWS --password-stdin $ECR_REPO
+            build:
+              commands:
+                - echo Building Docker image...
+                - docker build -t $ECR_REPO:latest -t $ECR_REPO:$CODEBUILD_RESOLVED_SOURCE_VERSION .
+                - docker push $ECR_REPO:latest
+                - docker push $ECR_REPO:$CODEBUILD_RESOLVED_SOURCE_VERSION
+            post_build:
+              commands:
+                - echo Updating ECS service...
+                - aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment --region $AWS_REGION_VAL
+
+  CodeBuildFrontend:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AWS::StackName}-build-frontend
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: FRONTEND_BUCKET
+            Value: !Ref FrontendBucket
+          - Name: DISTRIBUTION_ID
+            Value: !Ref CloudFrontDistribution
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            build:
+              commands:
+                - echo Deploying frontend to S3...
+                - aws s3 sync frontend/ s3://$FRONTEND_BUCKET/ --delete
+            post_build:
+              commands:
+                - echo Invalidating CloudFront cache...
+                - aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !Sub ${ArtifactBucket.Arn}
+                  - !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource:
+                  - !GetAtt CodeBuildBackend.Arn
+                  - !GetAtt CodeBuildFrontend.Arn
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnectionArn
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub ${AWS::StackName}-pipeline
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHub
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Sub ${GitHubRepoOwner}/${GitHubRepoName}
+                BranchName: !Ref GitHubBranch
+              OutputArtifacts:
+                - Name: SourceCode
+
+        - Name: Build
+          Actions:
+            - Name: BuildBackend
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildBackend
+              InputArtifacts:
+                - Name: SourceCode
+              RunOrder: 1
+
+            - Name: BuildFrontend
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildFrontend
+              InputArtifacts:
+                - Name: SourceCode
+              RunOrder: 1
+
+  # ==========================================================================
+  # CLOUDWATCH DASHBOARD
+  # ==========================================================================
+  CDCDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub ${AWS::StackName}-CDC-Monitor
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric", "x": 0, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Replication Lag (Bytes)",
+                "metrics": [["CDC/PgToDSQL", "ReplicationLagBytes"]],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Events Applied / Minute",
+                "metrics": [["CDC/PgToDSQL", "EventsAppliedPerMinute"]],
+                "period": 60, "stat": "Sum", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Events Failed",
+                "metrics": [["CDC/PgToDSQL", "EventsFailed"]],
+                "period": 60, "stat": "Sum", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Batch Queue Depth",
+                "metrics": [["CDC/PgToDSQL", "BatchQueueDepth"]],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 12, "width": 24, "height": 6,
+              "properties": {
+                "title": "ECS Task CPU & Memory",
+                "metrics": [
+                  ["AWS/ECS", "CPUUtilization", "ClusterName", "${ECSCluster}", "ServiceName", "${AWS::StackName}-cdc"],
+                  ["AWS/ECS", "MemoryUtilization", "ClusterName", "${ECSCluster}", "ServiceName", "${AWS::StackName}-cdc"]
+                ],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}"
+              }
+            }
+          ]
+        }
+
+  # ==========================================================================
+  # ALARMS
+  # ==========================================================================
+  LagAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-HighReplicationLag
+      MetricName: ReplicationLagBytes
+      Namespace: CDC/PgToDSQL
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 104857600  # 100MB
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: breaching
+
+  FailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-EventFailures
+      MetricName: EventsFailed
+      Namespace: CDC/PgToDSQL
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  DashboardURL:
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
+    Description: CDC Monitoring Dashboard URL
+
+  CloudWatchDashboard:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${CDCDashboard}
+    Description: CloudWatch Dashboard URL
+
+  APIURL:
+    Value: !Sub https://${MetricsAPI}.execute-api.${AWS::Region}.amazonaws.com/api/metrics
+    Description: Metrics API endpoint
+
+  PipelineName:
+    Value: !Ref Pipeline
+    Description: CodePipeline name (auto-deploys on git push)
+
+  ECRRepository:
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}
+    Description: Docker image repository

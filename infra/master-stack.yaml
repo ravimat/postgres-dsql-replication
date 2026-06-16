@@ -70,6 +70,17 @@ Parameters:
     Description: Parallel DSQL writer threads
 
   # --- Networking ---
+  PrivateRouteTableIds:
+    Type: List<String>
+    Description: Route table IDs for private subnets (needed for S3 Gateway Endpoint)
+
+
+  CreateVPCEndpoints:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Set to 'false' if VPC endpoints already exist in the VPC
+
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: VPC with connectivity to source PG and DSQL
@@ -82,7 +93,23 @@ Parameters:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security group allowing outbound to PG (5432) and DSQL
 
+
+Conditions:
+  ShouldCreateVPCEndpoints: !Equals [!Ref CreateVPCEndpoints, 'true']
+
 Resources:
+
+  EndpointSecurityGroupIngress:
+    Condition: ShouldCreateVPCEndpoints
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroupId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref SecurityGroupId
+      Description: Allow HTTPS from within SG for VPC Endpoints
+
   # ==========================================================================
   # SECRETS
   # ==========================================================================
@@ -247,6 +274,73 @@ Resources:
       RetentionInDays: 30
 
   # ==========================================================================
+  # VPC ENDPOINTS (Private connectivity — no NAT Gateway needed)
+  # ==========================================================================
+  VPCEndpointECRApi:
+    Condition: ShouldCreateVPCEndpoints
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.api
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref SecurityGroupId]
+      PrivateDnsEnabled: true
+
+  VPCEndpointECRDkr:
+    Condition: ShouldCreateVPCEndpoints
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.dkr
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref SecurityGroupId]
+      PrivateDnsEnabled: true
+
+  VPCEndpointS3:
+    Condition: ShouldCreateVPCEndpoints
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds: !Ref PrivateRouteTableIds
+
+  VPCEndpointSecretsManager:
+    Condition: ShouldCreateVPCEndpoints
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.secretsmanager
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref SecurityGroupId]
+      PrivateDnsEnabled: true
+
+  VPCEndpointLogs:
+    Condition: ShouldCreateVPCEndpoints
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref SecurityGroupId]
+      PrivateDnsEnabled: true
+
+  VPCEndpointMonitoring:
+    Condition: ShouldCreateVPCEndpoints
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.monitoring
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds: [!Ref SecurityGroupId]
+      PrivateDnsEnabled: true
+
+    # ==========================================================================
   # S3 BUCKETS
   # ==========================================================================
   CDCArchiveBucket:

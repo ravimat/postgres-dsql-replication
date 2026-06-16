@@ -338,12 +338,24 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
     service = None  # Set by CDCService
 
+    def _send_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_OPTIONS(self):
+        """Handle CORS preflight requests."""
+        self.send_response(200)
+        self._send_cors_headers()
+        self.end_headers()
+
     def do_GET(self):
         if self.path == "/health":
             status = self.service.get_health_status() if self.service else {}
             healthy = status.get("healthy", False)
             self.send_response(200 if healthy else 503)
             self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
             self.end_headers()
             self.wfile.write(json.dumps(status).encode())
 
@@ -351,6 +363,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             metrics = self.service.metrics.get_snapshot() if self.service else {}
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
             self.end_headers()
             self.wfile.write(json.dumps(metrics, indent=2).encode())
 
@@ -358,11 +371,13 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             ready = self.service._is_streaming if self.service else False
             self.send_response(200 if ready else 503)
             self.send_header("Content-Type", "text/plain")
+            self._send_cors_headers()
             self.end_headers()
             self.wfile.write(b"ready" if ready else b"not ready")
 
         else:
             self.send_response(404)
+            self._send_cors_headers()
             self.end_headers()
 
     def log_message(self, format, *args):

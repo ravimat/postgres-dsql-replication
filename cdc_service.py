@@ -418,6 +418,7 @@ class Metrics:
         }
         self._start_time = time.time()
         self._cw_client = None
+        self._table_stats: Dict[str, Dict] = {}  # per-table event tracking
         if config.metrics_enabled:
             try:
                 self._cw_client = boto3.client("cloudwatch")
@@ -427,6 +428,20 @@ class Metrics:
     def increment(self, counter: str, value: int = 1):
         with self._lock:
             self._counters[counter] = self._counters.get(counter, 0) + value
+
+    def track_table_event(self, schema: str, table: str, operation: str, success: bool = True):
+        """Track per-table event stats."""
+        with self._lock:
+            fqtn = f"{schema}.{table}"
+            if fqtn not in self._table_stats:
+                self._table_stats[fqtn] = {"events_applied": 0, "events_failed": 0, "last_event": None, "operations": {}}
+            stats = self._table_stats[fqtn]
+            if success:
+                stats["events_applied"] += 1
+            else:
+                stats["events_failed"] += 1
+            stats["last_event"] = time.time()
+            stats["operations"][operation] = stats["operations"].get(operation, 0) + 1
 
     def set_gauge(self, gauge: str, value: float):
         with self._lock:
@@ -438,6 +453,11 @@ class Metrics:
             return {
                 "counters": dict(self._counters),
                 "gauges": dict(self._gauges),
+                "tables": [
+                    {"name": k, "eventsApplied": v["events_applied"], "errors": v["events_failed"],
+                     "lastEvent": v["last_event"], "operations": v["operations"]}
+                    for k, v in self._table_stats.items()
+                ],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -1189,15 +1209,40 @@ class StreamingWALConsumer:
                     break
                 logger.warning(f"Connection lost: {e}. Reconnecting in {backoff}s...")
                 self.metrics.increment("reconnections")
-                time.sleep(backoff)
+                # Sleep in 1-second increments so we can respond to stop signals quickly
+                for _ in range(int(backoff)):
+                    if not self._running:
+                        return
+                    time.sleep(1)
                 backoff = min(backoff * 2, self.config.reconnect_max_wait)
 
             except Exception as e:
                 if not self._running:
                     break
                 logger.error(f"Unexpected error in WAL consumer: {e}", exc_info=True)
-                time.sleep(backoff)
+                for _ in range(int(backoff)):
+                    if not self._running:
+                        return
+                    time.sleep(1)
                 backoff = min(backoff * 2, self.config.reconnect_max_wait)
+
+    def _format_lsn(self, lsn) -> int:
+        """Convert LSN to integer for psycopg2 start_replication.
+        Accepts: None, 0, integer string ('5814244869352'), or PG format ('549/28000778').
+        Returns integer (0 means start from slot's confirmed_flush_lsn).
+        """
+        if not lsn:
+            return 0
+        lsn_str = str(lsn)
+        if '/' in lsn_str:
+            # PG format: "549/28000778" -> integer
+            hi, lo = lsn_str.split('/')
+            return (int(hi, 16) << 32) + int(lo, 16)
+        # Already an integer string
+        try:
+            return int(lsn_str)
+        except ValueError:
+            return 0
 
     def _establish_connection(self):
         """Create a logical replication connection."""
@@ -1234,7 +1279,7 @@ class StreamingWALConsumer:
         self._cursor.start_replication(
             slot_name=self.config.slot_name,
             decode=decode,
-            start_lsn=self._last_lsn or 0,
+            start_lsn=self._format_lsn(self._last_lsn),
             options=options,
         )
 
@@ -1367,6 +1412,11 @@ class BatchProcessor:
         # 1. Apply to DSQL
         success_count, failed_events = self._writer.apply_batch(batch)
         self.metrics.increment("events_applied", success_count)
+
+        # Track per-table stats
+        failed_set = set(id(e) for e in failed_events) if failed_events else set()
+        for event in batch:
+            self.metrics.track_table_event(event.schema, event.table, event.operation, id(event) not in failed_set)
 
         # 2. Handle failures
         if failed_events:
@@ -1828,6 +1878,14 @@ class CDCService:
             metrics_thread.start()
             self._threads.append(metrics_thread)
 
+        # Start control watcher thread (monitors control.json independently)
+        control_thread = threading.Thread(
+            target=self._run_control_watcher,
+            name="control-watcher", daemon=True,
+        )
+        control_thread.start()
+        self._threads.append(control_thread)
+
         # Wait for shutdown signal
         self._shutdown_event.wait()
         self._shutdown()
@@ -1882,6 +1940,25 @@ class CDCService:
             self.metrics.publish_to_cloudwatch()
             self._shutdown_event.wait(60)
 
+    def _run_control_watcher(self):
+        """Independent thread that polls control.json and stops/starts consumer accordingly."""
+        while not self._shutdown_event.is_set():
+            try:
+                state = self._control_manager.get_state()
+                if state == "stopped":
+                    logger.info("Control watcher: stopped — initiating shutdown")
+                    self._consumer.stop()
+                    self._shutdown_event.set()
+                    break
+                elif state == "paused":
+                    if self._is_streaming:
+                        logger.info("Control watcher: paused — stopping consumer")
+                        self._consumer.stop()
+                        self._is_streaming = False
+            except Exception as e:
+                logger.warning(f"Control watcher error: {e}")
+            time.sleep(2)
+
     def _start_health_server(self):
         HealthCheckHandler.service = self
         self._health_server = HTTPServer(
@@ -1912,6 +1989,7 @@ class CDCService:
             "control_state": self._control_manager.get_state(),
             "table_rules_count": self._rule_engine.rules_count,
             "table_rules_summary": self._rule_engine.rules_summary,
+            "tables": snapshot.get("tables", []),
         }
 
     def _signal_handler(self, signum, frame):

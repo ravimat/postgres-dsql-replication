@@ -305,8 +305,8 @@ def handle_post_loadtest(body: dict) -> dict:
 
     # Build the command
     command = (
-        f"cd /opt/cdc && source .env && "
-        f"python3.11 load_test_orders.py "
+        f"set -a && source /opt/cdc/.env && set +a && "
+        f"cd /opt/cdc && python3.11 /opt/cdc/load_test_orders.py "
         f"--source-dsn \"$SOURCE_DSN\" "
         f"--target-dsn \"host=$DSQL_HOSTNAME port=5432 dbname=postgres user=admin "
         f"password=$(aws dsql generate-db-connect-admin-auth-token "

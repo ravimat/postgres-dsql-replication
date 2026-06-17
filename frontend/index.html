@@ -161,7 +161,7 @@
                             <th>Status</th>
                             <th>Last Event</th>
                             <th>Events Applied</th>
-                            <th>Lag (bytes)</th>
+                            <th>Operations</th>
                             <th>Errors</th>
                         </tr>
                     </thead>
@@ -197,24 +197,38 @@
             </div>
             <div class="config-grid">
                 <div class="config-card">
-                    <h3>Connection Settings</h3>
+                    <h3>Dashboard Settings</h3>
                     <div class="config-form">
                         <div class="form-group">
-                            <label for="cfgApiUrl">API Base URL</label>
-                            <input type="text" id="cfgApiUrl" class="form-input" placeholder="/api or http://host:port">
-                            <span class="form-help">Leave as /api for CloudFront routing, or enter direct URL (e.g., http://ec2-ip:8080)</span>
-                        </div>
-                        <div class="form-group">
-                            <label for="cfgDirectHealth">Direct Health Endpoint (optional)</label>
-                            <input type="text" id="cfgDirectHealth" class="form-input" placeholder="http://ec2-public-ip:8080/health">
-                            <span class="form-help">If set, polls this URL directly for real-time CDC metrics instead of going through API Gateway</span>
+                            <label for="cfgApiUrl">API Endpoint</label>
+                            <input type="text" id="cfgApiUrl" class="form-input" placeholder="Auto-detected">
+                            <span class="form-help">API Gateway endpoint (auto-configured on deployment)</span>
                         </div>
                         <div class="form-group">
                             <label for="cfgRefreshInterval">Refresh Interval (seconds)</label>
                             <input type="number" id="cfgRefreshInterval" class="form-input" value="5" min="1" max="60">
-                            <span class="form-help">How often to poll for new metrics</span>
                         </div>
-                        <button class="btn btn-primary" onclick="CDC.saveConnectionSettings()">Connect</button>
+                        <button class="btn btn-primary" onclick="CDC.saveConnectionSettings()">Save</button>
+                    </div>
+                </div>
+                <div class="config-card">
+                    <h3>Database Connections</h3>
+                    <div class="config-form">
+                        <div class="form-group">
+                            <label for="cfgSourceDSN">Source PostgreSQL DSN</label>
+                            <input type="text" id="cfgSourceDSN" class="form-input" placeholder="host=xxx port=5432 dbname=postgres user=xxx password=xxx sslmode=require">
+                            <span class="form-help">PostgreSQL source connection string</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="cfgTargetDSN">Target Aurora DSQL Endpoint</label>
+                            <input type="text" id="cfgTargetDSN" class="form-input" placeholder="xxx.dsql.us-east-1.on.aws">
+                            <span class="form-help">DSQL cluster endpoint (IAM auth handled automatically)</span>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-secondary" onclick="CDC.testConnectivity()">🔗 Test Connectivity</button>
+                            <button class="btn btn-primary" onclick="CDC.saveDSN()">Save DSN</button>
+                        </div>
+                        <div id="connectivityResult" class="validation-message" style="display:none; margin-top: 12px;"></div>
                     </div>
                 </div>
                 <div class="config-card">
@@ -247,16 +261,16 @@
                     <h3>Service Info</h3>
                     <div class="info-list">
                         <div class="info-item">
-                            <span class="info-label">ECS Cluster</span>
-                            <span class="info-value" id="infoCluster">--</span>
+                            <span class="info-label">Plugin</span>
+                            <span class="info-value" id="infoPlugin">--</span>
                         </div>
                         <div class="info-item">
-                            <span class="info-label">ECS Service</span>
-                            <span class="info-value" id="infoService">--</span>
+                            <span class="info-label">Conflict Mode</span>
+                            <span class="info-value" id="infoConflict">--</span>
                         </div>
                         <div class="info-item">
-                            <span class="info-label">Task Definition</span>
-                            <span class="info-value" id="infoTaskDef">--</span>
+                            <span class="info-label">Instance</span>
+                            <span class="info-value" id="infoInstance">--</span>
                         </div>
                         <div class="info-item">
                             <span class="info-label">Uptime</span>

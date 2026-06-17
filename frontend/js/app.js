@@ -7,7 +7,6 @@ const CDC = (() => {
     // Configuration — set via environment or inline during deployment
     const CONFIG = {
         apiBaseUrl: window.CDC_API_URL || '/api', // API Gateway endpoint
-        directHealthUrl: localStorage.getItem('cdc_direct_health') || '', // Direct health endpoint
         refreshInterval: parseInt(localStorage.getItem('cdc_refresh_interval') || '5') * 1000,
         metricPeriod: 3600, // 1 hour of history
     };
@@ -111,31 +110,18 @@ const CDC = (() => {
 
     async function fetchHealth() {
         try {
-            const url = CONFIG.directHealthUrl || `${CONFIG.apiBaseUrl}/health`;
+            const url = `${CONFIG.apiBaseUrl}/health`;
             const response = await fetch(url);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await response.json();
         } catch (err) {
             console.error('Failed to fetch health:', err);
-            if (CONFIG.directHealthUrl) {
-                document.getElementById('statusBadge')?.setAttribute('data-status', 'error');
-            }
             return null;
         }
     }
 
     // ─── Refresh / Update ─────────────────────────────────────────────
     async function refresh() {
-        // Update control badge from health data
-        try {
-            const url = CONFIG.directHealthUrl || CONFIG.apiBaseUrl + '/health';
-            const r = await fetch(url);
-            if (r.ok) {
-                const h = await r.json();
-                if (h.control_state) updateControlBadge(h.control_state);
-            }
-        } catch(e) {}
-
         const [metrics, health] = await Promise.all([fetchMetrics(), fetchHealth()]);
 
         if (metrics) {
@@ -150,6 +136,9 @@ const CDC = (() => {
             updateServiceInfo(health);
             if (health.control_state) {
                 updateControlStateBadge(health.control_state);
+            }
+            if (health.tables && health.tables.length) {
+                updateTableStatus(health.tables);
             }
         }
 
@@ -217,10 +206,10 @@ const CDC = (() => {
         tbody.innerHTML = tables.map(t => `
             <tr>
                 <td><code>${t.name}</code></td>
-                <td><span class="badge badge-${t.status === 'active' ? 'green' : t.status === 'lagging' ? 'orange' : 'red'}">${t.status}</span></td>
-                <td>${t.lastEvent ? new Date(t.lastEvent).toLocaleTimeString() : '--'}</td>
+                <td><span class="badge badge-${t.errors > 0 ? 'red' : t.eventsApplied > 0 ? 'green' : 'orange'}">${t.errors > 0 ? 'errors' : t.eventsApplied > 0 ? 'active' : 'idle'}</span></td>
+                <td>${t.lastEvent ? new Date(t.lastEvent * 1000).toLocaleTimeString() : '--'}</td>
                 <td>${formatNumber(t.eventsApplied || 0)}</td>
-                <td>${formatBytes(t.lag || 0)}</td>
+                <td>${t.operations ? Object.entries(t.operations).map(([k,v]) => k + ':' + v).join(' ') : '--'}</td>
                 <td>${t.errors || 0}</td>
             </tr>
         `).join('');
@@ -245,11 +234,16 @@ const CDC = (() => {
 
     // ─── Service Info ─────────────────────────────────────────────────
     function updateServiceInfo(health) {
-        setText('infoCluster', health.cluster || '--');
-        setText('infoService', health.service || '--');
-        setText('infoTaskDef', health.taskDefinition || '--');
-        setText('infoUptime', health.uptime || '--');
-        setText('infoRegion', health.region || '--');
+        setText('infoPlugin', health.plugin || '--');
+        setText('infoConflict', health.conflict_mode || '--');
+        setText('infoInstance', health.instance_id || '--');
+        const uptime = health.uptime_seconds;
+        if (uptime != null) {
+            const h = Math.floor(uptime / 3600);
+            const m = Math.floor((uptime % 3600) / 60);
+            setText('infoUptime', `${h}h ${m}m`);
+        }
+        setText('infoRegion', health.region || 'us-east-1');
     }
 
     // ─── Configuration ────────────────────────────────────────────────
@@ -475,33 +469,26 @@ const CDC = (() => {
     // ─── Connection Settings ─────────────────────────────────────────
     function loadConnectionSettings() {
         const apiUrl = localStorage.getItem('cdc_api_url');
-        const directHealth = localStorage.getItem('cdc_direct_health');
         const interval = localStorage.getItem('cdc_refresh_interval');
 
         if (apiUrl) CONFIG.apiBaseUrl = apiUrl;
-        if (directHealth) CONFIG.directHealthUrl = directHealth;
         if (interval) CONFIG.refreshInterval = parseInt(interval) * 1000;
 
         // Populate form fields if on config page
         const apiInput = document.getElementById('cfgApiUrl');
-        const healthInput = document.getElementById('cfgDirectHealth');
         const intervalInput = document.getElementById('cfgRefreshInterval');
         if (apiInput) apiInput.value = CONFIG.apiBaseUrl;
-        if (healthInput) healthInput.value = CONFIG.directHealthUrl;
         if (intervalInput) intervalInput.value = CONFIG.refreshInterval / 1000;
     }
 
     function saveConnectionSettings() {
         const apiUrl = document.getElementById('cfgApiUrl').value.trim();
-        const directHealth = document.getElementById('cfgDirectHealth').value.trim();
         const interval = document.getElementById('cfgRefreshInterval').value;
 
         if (apiUrl) {
             CONFIG.apiBaseUrl = apiUrl;
             localStorage.setItem('cdc_api_url', apiUrl);
         }
-        CONFIG.directHealthUrl = directHealth;
-        localStorage.setItem('cdc_direct_health', directHealth);
         CONFIG.refreshInterval = parseInt(interval) * 1000;
         localStorage.setItem('cdc_refresh_interval', interval);
 
@@ -510,7 +497,7 @@ const CDC = (() => {
         startAutoRefresh();
         refresh();
 
-        alert('Connection settings saved! Dashboard will now poll: ' + (directHealth || apiUrl + '/health'));
+        alert('Connection settings saved! Dashboard will now poll: ' + apiUrl + '/health');
     }
 
 
@@ -519,7 +506,7 @@ const CDC = (() => {
         const stateMap = {start: 'running', resume: 'running', pause: 'paused', stop: 'stopped'};
         const newState = stateMap[action] || action;
         try {
-            const url = CONFIG.directHealthUrl ? CONFIG.directHealthUrl.replace('/health', '/control') : CONFIG.apiBaseUrl + '/control';
+            const url = CONFIG.apiBaseUrl + '/control';
             const resp = await fetch(url, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -546,9 +533,10 @@ const CDC = (() => {
 
     // ─── Table Mapping ───────────────────────────────────────────────
     function validateTableMapping() {
-        const textarea = document.getElementById('tableRulesInput');
-        const msgDiv = document.getElementById('rulesValidation');
-        if (!textarea || !msgDiv) return false;
+        const textarea = document.getElementById('rulesTextarea');
+        const msgDiv = document.getElementById('validationMessage');
+        if (!textarea) return false;
+        if (msgDiv) msgDiv.style.display = 'block';
         try {
             const data = JSON.parse(textarea.value);
             if (!data.rules || !Array.isArray(data.rules)) {
@@ -576,7 +564,7 @@ const CDC = (() => {
 
     async function applyTableMapping() {
         if (!validateTableMapping()) return;
-        const rulesJson = document.getElementById('tableRulesInput').value;
+        const rulesJson = document.getElementById('rulesTextarea').value;
         try {
             const resp = await fetch(CONFIG.apiBaseUrl + '/table-mapping', {
                 method: 'POST',
@@ -596,7 +584,7 @@ const CDC = (() => {
     }
 
     async function loadTableMapping() {
-        const display = document.getElementById('activeRulesDisplay');
+        const display = document.getElementById('currentRulesDisplay');
         if (!display) return;
         try {
             const resp = await fetch(CONFIG.apiBaseUrl + '/table-mapping');
@@ -618,13 +606,83 @@ const CDC = (() => {
         if (!input || !input.files[0]) return;
         const reader = new FileReader();
         reader.onload = function(e) {
-            document.getElementById('tableRulesInput').value = e.target.result;
+        document.getElementById('rulesTextarea').value = e.target.result;
             validateTableMapping();
         };
         reader.readAsText(input.files[0]);
     }
 
-        return { init, refresh, saveConfig, saveConnectionSettings, startLoadTest, stopLoadTest, controlReplication, applyTableMapping, validateTableMapping, uploadRulesFile, loadTableMapping };
+    // ─── Database Connection Management ───────────────────────────────
+    async function testConnectivity() {
+        const resultDiv = document.getElementById('connectivityResult');
+        const sourceDSN = document.getElementById('cfgSourceDSN').value.trim();
+        const targetDSN = document.getElementById('cfgTargetDSN').value.trim();
+
+        if (!sourceDSN && !targetDSN) {
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'validation-message error';
+            resultDiv.textContent = '✗ Enter at least one DSN to test';
+            return;
+        }
+
+        resultDiv.style.display = 'block';
+        resultDiv.className = 'validation-message';
+        resultDiv.textContent = '⏳ Testing connectivity...';
+
+        try {
+            const resp = await fetch(`${CONFIG.apiBaseUrl}/test-connection`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({source_dsn: sourceDSN, target_dsn: targetDSN}),
+            });
+            const data = await resp.json();
+            if (data.source_ok && data.target_ok) {
+                resultDiv.className = 'validation-message success';
+                resultDiv.textContent = '✓ Both connections successful! Source: ' + (data.source_version || 'OK') + ' | Target: ' + (data.target_status || 'OK');
+            } else {
+                resultDiv.className = 'validation-message error';
+                let msg = '';
+                if (data.source_error) msg += '✗ Source: ' + data.source_error + '\n';
+                if (data.target_error) msg += '✗ Target: ' + data.target_error;
+                if (data.source_ok) msg += '✓ Source: OK\n';
+                if (data.target_ok) msg += '✓ Target: OK';
+                resultDiv.textContent = msg || '✗ Connection failed';
+            }
+        } catch (e) {
+            resultDiv.className = 'validation-message error';
+            resultDiv.textContent = '✗ Failed to test: ' + e.message;
+        }
+    }
+
+    async function saveDSN() {
+        const sourceDSN = document.getElementById('cfgSourceDSN').value.trim();
+        const targetDSN = document.getElementById('cfgTargetDSN').value.trim();
+        const resultDiv = document.getElementById('connectivityResult');
+
+        try {
+            const resp = await fetch(`${CONFIG.apiBaseUrl}/dsn`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({source_dsn: sourceDSN, target_dsn: targetDSN}),
+            });
+            const data = await resp.json();
+            if (data.status === 'ok') {
+                resultDiv.style.display = 'block';
+                resultDiv.className = 'validation-message success';
+                resultDiv.textContent = '✓ DSN saved. Service will restart with new connections.';
+            } else {
+                resultDiv.style.display = 'block';
+                resultDiv.className = 'validation-message error';
+                resultDiv.textContent = '✗ ' + (data.error || 'Failed to save');
+            }
+        } catch (e) {
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'validation-message error';
+            resultDiv.textContent = '✗ Failed to save: ' + e.message;
+        }
+    }
+
+return { init, refresh, saveConfig, saveConnectionSettings, startLoadTest, stopLoadTest, controlReplication, applyTableMapping, validateTableMapping, uploadRulesFile, loadTableMapping, testConnectivity, saveDSN };
 })();
 
 // Boot

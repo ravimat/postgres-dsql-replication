@@ -1,0 +1,16 @@
+aws cloudformation deploy \
+--template-file infra/master-stack.yaml \
+--stack-name pg-dsql-cdc \
+--capabilities CAPABILITY_IAM \
+--parameter-overrides \
+CreateVPCEndpoints=false \
+GitHubConnectionArn="arn:aws:codeconnections:us-east-1:853276114382:connection/07c5aa89-2e74-4030-9683-73cd5b8d2936" \
+GitHubRepoOwner="mathurravi23" \
+GitHubRepoName="pg-dsql-cdc" \
+SourceDSN="host=pg17.caiibwc84xxl.us-east-1.rds.amazonaws.com port=5432 dbname=postgres user=postgres password=Admin123" \
+TargetDSQLEndpoint="ejtvrt6yfdywj3yex7yk5p76rq.dsql.us-east-1.on.aws" \
+VpcId="vpc-0636bd5b5bf187e9b" \
+SubnetIds="subnet-0750a559a07024e94,subnet-0ebd9f522003de57b,subnet-05bca54708e8a27b5" \
+SecurityGroupId="sg-085a1ef46023d89cd" \
+PrivateRouteTableIds="rtb-03bcde10943d41280"
+

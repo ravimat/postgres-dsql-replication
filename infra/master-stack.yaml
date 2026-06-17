@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: |
   PostgreSQL to Aurora DSQL CDC Replication - One-Click Deployment
   Deploys the full CDC solution from a GitHub repository:
-  - ECS Fargate CDC service (24/7 streaming replication)
+  - EC2 CDC service with systemd (24/7 streaming replication)
   - CloudFront + S3 monitoring dashboard
   - API Gateway + Lambda metrics proxy
   - CloudWatch Dashboard with replication metrics
@@ -70,16 +70,11 @@ Parameters:
     Description: Parallel DSQL writer threads
 
   # --- Networking ---
-  PrivateRouteTableIds:
-    Type: List<String>
-    Description: Route table IDs for private subnets (needed for S3 Gateway Endpoint)
 
-
-  CreateVPCEndpoints:
-    Type: String
-    Default: 'true'
-    AllowedValues: ['true', 'false']
-    Description: Set to 'false' if VPC endpoints already exist in the VPC
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Amazon Linux 2023 AMI (auto-resolved via SSM)
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -87,28 +82,15 @@ Parameters:
 
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Private subnets for ECS tasks
+    Description: Subnets for EC2 instance and VPC endpoints
 
   SecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security group allowing outbound to PG (5432) and DSQL
 
 
-Conditions:
-  ShouldCreateVPCEndpoints: !Equals [!Ref CreateVPCEndpoints, 'true']
-
 Resources:
 
-  EndpointSecurityGroupIngress:
-    Condition: ShouldCreateVPCEndpoints
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref SecurityGroupId
-      IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
-      SourceSecurityGroupId: !Ref SecurityGroupId
-      Description: Allow HTTPS from within SG for VPC Endpoints
 
   # ==========================================================================
   # SECRETS
@@ -120,26 +102,11 @@ Resources:
       SecretString: !Ref SourceDSN
 
   # ==========================================================================
-  # ECR REPOSITORY
-  # ==========================================================================
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: !Sub ${AWS::StackName}-cdc
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          {"rules":[{"rulePriority":1,"selection":{"tagStatus":"untagged","countType":"imageCountMoreThan","countNumber":5},"action":{"type":"expire"}}]}
 
   # ==========================================================================
-  # ECS CLUSTER + SERVICE
+  # EC2 INSTANCE (CDC Service)
   # ==========================================================================
-  ECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: !Sub ${AWS::StackName}-cluster
-      CapacityProviders: [FARGATE]
-
-  ECSTaskRole:
+  CDCInstanceRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -147,10 +114,12 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service: ecs-tasks.amazonaws.com
+              Service: ec2.amazonaws.com
             Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
-        - PolicyName: CDCTaskPolicy
+        - PolicyName: CDCInstancePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -168,177 +137,119 @@ Resources:
                 Action:
                   - s3:PutObject
                 Resource: !Sub ${CDCArchiveBucket.Arn}/*
-
-  ECSExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-      Policies:
-        - PolicyName: SecretsAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
               - Effect: Allow
-                Action: secretsmanager:GetSecretValue
-                Resource: !Ref SourceDSNSecret
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: '*'
 
-  ECSTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
+  CDCInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
     Properties:
-      Family: !Sub ${AWS::StackName}-cdc
-      NetworkMode: awsvpc
-      RequiresCompatibilities: [FARGATE]
-      Cpu: '1024'
-      Memory: '2048'
-      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
-      ContainerDefinitions:
-        - Name: cdc-worker
-          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest
-          Essential: true
-          PortMappings:
-            - ContainerPort: 8080
-              Protocol: tcp
-          HealthCheck:
-            Command: [CMD-SHELL, "curl -f http://localhost:8080/health || exit 1"]
-            Interval: 15
-            Timeout: 5
-            Retries: 3
-            StartPeriod: 30
-          Environment:
-            - Name: SLOT_NAME
-              Value: !Ref SlotName
-            - Name: DECODING_PLUGIN
-              Value: !Ref DecodingPlugin
-            - Name: CONFLICT_MODE
-              Value: !Ref ConflictMode
-            - Name: BATCH_SIZE
-              Value: !Sub ${BatchSize}
-            - Name: PARALLEL_WORKERS
-              Value: !Sub ${ParallelWorkers}
-            - Name: HEALTH_PORT
-              Value: '8080'
-            - Name: METRICS_ENABLED
-              Value: 'true'
-            - Name: TARGET_DSN
-              Value: !Sub "host=${TargetDSQLEndpoint} port=5432 dbname=postgres user=admin sslmode=require"
-            - Name: DSQL_HOSTNAME
-              Value: !Ref TargetDSQLEndpoint
-            - Name: DSQL_REGION
-              Value: !Ref DSQLRegion
-            - Name: S3_BUCKET
-              Value: !Ref CDCArchiveBucket
-          Secrets:
-            - Name: SOURCE_DSN
-              ValueFrom: !Ref SourceDSNSecret
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: cdc
-          StopTimeout: 60
-          LinuxParameters:
-            InitProcessEnabled: true
+      Roles: [!Ref CDCInstanceRole]
 
-  ECSService:
-    Type: AWS::ECS::Service
+  CDCInstance:
+    Type: AWS::EC2::Instance
     Properties:
-      ServiceName: !Sub ${AWS::StackName}-cdc
-      Cluster: !Ref ECSCluster
-      TaskDefinition: !Ref ECSTaskDefinition
-      DesiredCount: 1
-      LaunchType: FARGATE
-      DeploymentConfiguration:
-        MinimumHealthyPercent: 0
-        MaximumPercent: 100
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          Subnets: !Ref SubnetIds
-          SecurityGroups: [!Ref SecurityGroupId]
-          AssignPublicIp: DISABLED
-      EnableExecuteCommand: true
+      InstanceType: t3.medium
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref CDCInstanceProfile
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          SubnetId: !Select [0, !Ref SubnetIds]
+          GroupSet: [!Ref SecurityGroupId]
+          AssociatePublicIpAddress: true
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-cdc-worker
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -ex
+
+          # Install dependencies
+          yum update -y
+          yum install -y python3.11 python3.11-pip git
+
+          # Create app directory
+          mkdir -p /opt/cdc
+          cd /opt/cdc
+
+          # Clone the repository
+          git clone https://github.com/${GitHubRepoOwner}/${GitHubRepoName}.git .
+          git checkout ${GitHubBranch}
+
+          # Install Python dependencies
+          python3.11 -m pip install psycopg2-binary boto3
+
+          # Get SOURCE_DSN from Secrets Manager
+          SOURCE_DSN=$(aws secretsmanager get-secret-value             --secret-id ${SourceDSNSecret}             --query SecretString --output text --region ${AWS::Region})
+
+          # Create environment file
+          cat > /opt/cdc/.env << ENVEOF
+          SOURCE_DSN=${!SOURCE_DSN}
+          TARGET_DSN=host=${TargetDSQLEndpoint} port=5432 dbname=postgres user=admin sslmode=require
+          DSQL_HOSTNAME=${TargetDSQLEndpoint}
+          DSQL_REGION=${DSQLRegion}
+          SLOT_NAME=${SlotName}
+          DECODING_PLUGIN=${DecodingPlugin}
+          CONFLICT_MODE=${ConflictMode}
+          BATCH_SIZE=${BatchSize}
+          PARALLEL_WORKERS=${ParallelWorkers}
+          FLUSH_INTERVAL_MS=500
+          HEALTH_PORT=8080
+          METRICS_ENABLED=true
+          LOG_LEVEL=INFO
+          S3_BUCKET=${CDCArchiveBucket}
+          ENVEOF
+
+          # Create systemd service
+          cat > /etc/systemd/system/cdc-service.service << SVCEOF
+          [Unit]
+          Description=PG to Aurora DSQL CDC Replication Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/cdc
+          EnvironmentFile=/opt/cdc/.env
+          ExecStart=/usr/bin/python3.11 /opt/cdc/cdc_service.py
+          Restart=always
+          RestartSec=5
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+          SVCEOF
+
+          # Start the service
+          systemctl daemon-reload
+          systemctl enable cdc-service
+          systemctl start cdc-service
+
+          # Signal CloudFormation
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource CDCInstance --region ${AWS::Region}
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M
 
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /ecs/${AWS::StackName}-cdc
+      LogGroupName: !Sub /ec2/${AWS::StackName}-cdc
       RetentionInDays: 30
-
-  # ==========================================================================
-  # VPC ENDPOINTS (Private connectivity — no NAT Gateway needed)
-  # ==========================================================================
-  VPCEndpointECRApi:
-    Condition: ShouldCreateVPCEndpoints
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VpcId
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.api
-      VpcEndpointType: Interface
-      SubnetIds: !Ref SubnetIds
-      SecurityGroupIds: [!Ref SecurityGroupId]
-      PrivateDnsEnabled: true
-
-  VPCEndpointECRDkr:
-    Condition: ShouldCreateVPCEndpoints
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VpcId
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.dkr
-      VpcEndpointType: Interface
-      SubnetIds: !Ref SubnetIds
-      SecurityGroupIds: [!Ref SecurityGroupId]
-      PrivateDnsEnabled: true
-
-  VPCEndpointS3:
-    Condition: ShouldCreateVPCEndpoints
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VpcId
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
-      VpcEndpointType: Gateway
-      RouteTableIds: !Ref PrivateRouteTableIds
-
-  VPCEndpointSecretsManager:
-    Condition: ShouldCreateVPCEndpoints
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VpcId
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.secretsmanager
-      VpcEndpointType: Interface
-      SubnetIds: !Ref SubnetIds
-      SecurityGroupIds: [!Ref SecurityGroupId]
-      PrivateDnsEnabled: true
-
-  VPCEndpointLogs:
-    Condition: ShouldCreateVPCEndpoints
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VpcId
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
-      VpcEndpointType: Interface
-      SubnetIds: !Ref SubnetIds
-      SecurityGroupIds: [!Ref SecurityGroupId]
-      PrivateDnsEnabled: true
-
-  VPCEndpointMonitoring:
-    Condition: ShouldCreateVPCEndpoints
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref VpcId
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.monitoring
-      VpcEndpointType: Interface
-      SubnetIds: !Ref SubnetIds
-      SecurityGroupIds: [!Ref SecurityGroupId]
-      PrivateDnsEnabled: true
 
     # ==========================================================================
   # S3 BUCKETS
@@ -447,9 +358,8 @@ Resources:
                 Action:
                   - cloudwatch:GetMetricData
                   - cloudwatch:ListMetrics
-                  - ecs:DescribeServices
-                  - ecs:DescribeTasks
-                  - ecs:ListTasks
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeInstances
                 Resource: '*'
 
   MetricsLambda:
@@ -464,8 +374,8 @@ Resources:
       Environment:
         Variables:
           CW_NAMESPACE: CDC/PgToDSQL
-          ECS_CLUSTER: !Ref ECSCluster
-          ECS_SERVICE: !Sub ${AWS::StackName}-cdc
+          CDC_INSTANCE_ID: !Ref CDCInstance
+          CDC_HEALTH_PORT: '8080'
       Code:
         ZipFile: |
           import json
@@ -474,7 +384,7 @@ Resources:
           from datetime import datetime, timedelta, timezone
 
           cw = boto3.client('cloudwatch')
-          ecs = boto3.client('ecs')
+          ec2_client = boto3.client('ec2')
           NAMESPACE = os.environ.get('CW_NAMESPACE', 'CDC/PgToDSQL')
 
           def handler(event, context):
@@ -513,16 +423,19 @@ Resources:
 
           def get_health():
               try:
-                  cluster = os.environ['ECS_CLUSTER']
-                  service = os.environ['ECS_SERVICE']
-                  svc = ecs.describe_services(cluster=cluster, services=[service])
-                  s = svc['services'][0]
-                  return response(200, {
-                      'status': s['status'],
-                      'running_count': s['runningCount'],
-                      'desired_count': s['desiredCount'],
-                      'deployments': len(s['deployments']),
-                  })
+                  ec2 = boto3.client('ec2')
+                  instance_id = os.environ['CDC_INSTANCE_ID']
+                  resp = ec2.describe_instance_status(InstanceIds=[instance_id])
+                  statuses = resp.get('InstanceStatuses', [])
+                  if statuses:
+                      s = statuses[0]
+                      return response(200, {
+                          'instance_state': s['InstanceState']['Name'],
+                          'system_status': s['SystemStatus']['Status'],
+                          'instance_status': s['InstanceStatus']['Status'],
+                          'instance_id': instance_id,
+                      })
+                  return response(200, {'instance_state': 'unknown', 'instance_id': instance_id})
               except Exception as e:
                   return response(500, {'error': str(e)})
 
@@ -638,7 +551,7 @@ Resources:
   CodeBuildBackend:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub ${AWS::StackName}-build-backend
+      Name: !Sub ${AWS::StackName}-deploy-backend
       ServiceRole: !GetAtt CodeBuildRole.Arn
       Artifacts:
         Type: CODEPIPELINE
@@ -646,35 +559,26 @@ Resources:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
-        PrivilegedMode: true
         EnvironmentVariables:
-          - Name: ECR_REPO
-            Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}
+          - Name: INSTANCE_ID
+            Value: !Ref CDCInstance
           - Name: AWS_REGION_VAL
             Value: !Ref AWS::Region
-          - Name: ECS_CLUSTER
-            Value: !Ref ECSCluster
-          - Name: ECS_SERVICE
-            Value: !Sub ${AWS::StackName}-cdc
       Source:
         Type: CODEPIPELINE
         BuildSpec: |
           version: 0.2
           phases:
-            pre_build:
-              commands:
-                - echo Logging in to ECR...
-                - aws ecr get-login-password --region $AWS_REGION_VAL | docker login --username AWS --password-stdin $ECR_REPO
             build:
               commands:
-                - echo Building Docker image...
-                - docker build -t $ECR_REPO:latest -t $ECR_REPO:$CODEBUILD_RESOLVED_SOURCE_VERSION .
-                - docker push $ECR_REPO:latest
-                - docker push $ECR_REPO:$CODEBUILD_RESOLVED_SOURCE_VERSION
-            post_build:
-              commands:
-                - echo Updating ECS service...
-                - aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment --region $AWS_REGION_VAL
+                - echo "Deploying CDC service update to EC2..."
+                - |
+                  aws ssm send-command \
+                    --instance-ids $INSTANCE_ID \
+                    --document-name "AWS-RunShellScript" \
+                    --parameters 'commands=["cd /opt/cdc && git pull && systemctl restart cdc-service"]' \
+                    --region $AWS_REGION_VAL
+
 
   CodeBuildFrontend:
     Type: AWS::CodeBuild::Project
@@ -834,10 +738,9 @@ Resources:
             {
               "type": "metric", "x": 0, "y": 12, "width": 24, "height": 6,
               "properties": {
-                "title": "ECS Task CPU & Memory",
+                "title": "EC2 Instance CPU",
                 "metrics": [
-                  ["AWS/ECS", "CPUUtilization", "ClusterName", "${ECSCluster}", "ServiceName", "${AWS::StackName}-cdc"],
-                  ["AWS/ECS", "MemoryUtilization", "ClusterName", "${ECSCluster}", "ServiceName", "${AWS::StackName}-cdc"]
+                  ["AWS/EC2", "CPUUtilization", "InstanceId", "${CDCInstance}"]
                 ],
                 "period": 60, "stat": "Average", "region": "${AWS::Region}"
               }
@@ -891,6 +794,10 @@ Outputs:
     Value: !Ref Pipeline
     Description: CodePipeline name (auto-deploys on git push)
 
-  ECRRepository:
-    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}
-    Description: Docker image repository
+  CDCInstanceId:
+    Value: !Ref CDCInstance
+    Description: EC2 Instance ID running the CDC service
+
+  CDCHealthEndpoint:
+    Value: !Sub http://${CDCInstance.PrivateIp}:8080/health
+    Description: CDC service health check endpoint (VPC-internal)

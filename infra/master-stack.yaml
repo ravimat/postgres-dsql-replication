@@ -6,13 +6,9 @@ Description: |
   - CloudFront + S3 monitoring dashboard
   - API Gateway + Lambda metrics proxy
   - CloudWatch Dashboard with replication metrics
-  - CodePipeline CI/CD (auto-deploys on git push)
 
 Parameters:
   # --- Source Code ---
-  GitHubConnectionArn:
-    Type: String
-    Description: ARN of the CodeStar Connection to GitHub (create in console first)
   
   GitHubRepoOwner:
     Type: String
@@ -192,8 +188,19 @@ Resources:
           # Install Python dependencies
           python3.11 -m pip install psycopg2-binary boto3
 
-          # Get SOURCE_DSN from Secrets Manager
-          SOURCE_DSN=$(aws secretsmanager get-secret-value             --secret-id ${SourceDSNSecret}             --query SecretString --output text --region ${AWS::Region})
+          # Get SOURCE_DSN from Secrets Manager (supports both plain DSN and RDS JSON format)
+          SECRET_RAW=$(aws secretsmanager get-secret-value --secret-id ${SourceDSNSecret} --query SecretString --output text --region ${AWS::Region})
+          # Check if it's JSON (RDS format) or plain DSN string
+          if echo "$SECRET_RAW" | python3.11 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+            # RDS JSON format: {"username":"x","password":"x","host":"x","port":5432,"dbname":"x"}
+            SOURCE_DSN=$(echo "$SECRET_RAW" | python3.11 -c "
+import sys,json; s=json.load(sys.stdin)
+print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','postgres')} user={s['username']} password={s['password']} sslmode=require\")
+")
+          else
+            # Plain DSN string
+            SOURCE_DSN="$SECRET_RAW"
+          fi
 
           # Create environment file
           cat > /opt/cdc/.env << ENVEOF
@@ -717,12 +724,42 @@ Resources:
   # ==========================================================================
   # CODEPIPELINE CI/CD
   # ==========================================================================
-  ArtifactBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub ${AWS::StackName}-artifacts-${AWS::AccountId}
 
-  CodeBuildRole:
+  # Custom Resource to empty S3 buckets on stack deletion
+  EmptyBucketsOnDelete:
+    Type: Custom::EmptyBuckets
+    Properties:
+      ServiceToken: !GetAtt EmptyBucketsFunction.Arn
+      Buckets:
+        - !Ref CDCArchiveBucket
+        - !Ref FrontendBucket
+
+  EmptyBucketsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-empty-buckets
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 120
+      Role: !GetAtt EmptyBucketsRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+              if event['RequestType'] == 'Delete':
+                  s3 = boto3.resource('s3')
+                  for bucket_name in event['ResourceProperties'].get('Buckets', []):
+                      try:
+                          bucket = s3.Bucket(bucket_name)
+                          bucket.object_versions.delete()
+                          bucket.objects.delete()
+                          print(f'Emptied bucket: {bucket_name}')
+                      except Exception as e:
+                          print(f'Error emptying {bucket_name}: {e}')
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+  EmptyBucketsRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -730,189 +767,29 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service: codebuild.amazonaws.com
+              Service: lambda.amazonaws.com
             Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: CodeBuildPolicy
+        - PolicyName: EmptyBuckets
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - ecr:GetAuthorizationToken
-                  - ecr:BatchCheckLayerAvailability
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:PutImage
-                  - ecr:InitiateLayerUpload
-                  - ecr:UploadLayerPart
-                  - ecr:CompleteLayerUpload
-                  - ecr:BatchGetImage
-                Resource: '*'
-              - Effect: Allow
-                Action:
+                  - s3:DeleteObject
+                  - s3:DeleteObjectVersion
+                  - s3:ListBucket
+                  - s3:ListBucketVersions
                   - s3:GetObject
-                  - s3:PutObject
-                  - s3:GetBucketLocation
                 Resource:
-                  - !Sub ${ArtifactBucket.Arn}/*
+                  - !Sub ${CDCArchiveBucket.Arn}
+                  - !Sub ${CDCArchiveBucket.Arn}/*
+                  - !Sub ${FrontendBucket.Arn}
                   - !Sub ${FrontendBucket.Arn}/*
-              - Effect: Allow
-                Action:
-                  - ecs:UpdateService
-                Resource: '*'
-
-  CodeBuildBackend:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: !Sub ${AWS::StackName}-deploy-backend
-      ServiceRole: !GetAtt CodeBuildRole.Arn
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
-        EnvironmentVariables:
-          - Name: INSTANCE_ID
-            Value: !Ref CDCInstance
-          - Name: AWS_REGION_VAL
-            Value: !Ref AWS::Region
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            build:
-              commands:
-                - echo "Deploying CDC service update to EC2..."
-                - |
-                  aws ssm send-command \
-                    --instance-ids $INSTANCE_ID \
-                    --document-name "AWS-RunShellScript" \
-                    --parameters 'commands=["cd /opt/cdc && git pull && systemctl restart cdc-service"]' \
-                    --region $AWS_REGION_VAL
 
 
-  CodeBuildFrontend:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: !Sub ${AWS::StackName}-build-frontend
-      ServiceRole: !GetAtt CodeBuildRole.Arn
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
-        EnvironmentVariables:
-          - Name: FRONTEND_BUCKET
-            Value: !Ref FrontendBucket
-          - Name: DISTRIBUTION_ID
-            Value: !Ref CloudFrontDistribution
-      Source:
-        Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            build:
-              commands:
-                - echo Deploying frontend to S3...
-                - aws s3 sync frontend/ s3://$FRONTEND_BUCKET/ --delete
-            post_build:
-              commands:
-                - echo Invalidating CloudFront cache...
-                - aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
-
-  PipelineRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codepipeline.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: PipelinePolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:*
-                Resource:
-                  - !Sub ${ArtifactBucket.Arn}
-                  - !Sub ${ArtifactBucket.Arn}/*
-              - Effect: Allow
-                Action:
-                  - codebuild:BatchGetBuilds
-                  - codebuild:StartBuild
-                Resource:
-                  - !GetAtt CodeBuildBackend.Arn
-                  - !GetAtt CodeBuildFrontend.Arn
-              - Effect: Allow
-                Action:
-                  - codestar-connections:UseConnection
-                Resource: !Ref GitHubConnectionArn
-
-  Pipeline:
-    Type: AWS::CodePipeline::Pipeline
-    Properties:
-      Name: !Sub ${AWS::StackName}-pipeline
-      RoleArn: !GetAtt PipelineRole.Arn
-      ArtifactStore:
-        Type: S3
-        Location: !Ref ArtifactBucket
-      Stages:
-        - Name: Source
-          Actions:
-            - Name: GitHub
-              ActionTypeId:
-                Category: Source
-                Owner: AWS
-                Provider: CodeStarSourceConnection
-                Version: '1'
-              Configuration:
-                ConnectionArn: !Ref GitHubConnectionArn
-                FullRepositoryId: !Sub ${GitHubRepoOwner}/${GitHubRepoName}
-                BranchName: !Ref GitHubBranch
-              OutputArtifacts:
-                - Name: SourceCode
-
-        - Name: Build
-          Actions:
-            - Name: BuildBackend
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: '1'
-              Configuration:
-                ProjectName: !Ref CodeBuildBackend
-              InputArtifacts:
-                - Name: SourceCode
-              RunOrder: 1
-
-            - Name: BuildFrontend
-              ActionTypeId:
-                Category: Build
-                Owner: AWS
-                Provider: CodeBuild
-                Version: '1'
-              Configuration:
-                ProjectName: !Ref CodeBuildFrontend
-              InputArtifacts:
-                - Name: SourceCode
-              RunOrder: 1
-
-  # ==========================================================================
   # CLOUDWATCH DASHBOARD
   # ==========================================================================
   CDCDashboard:
@@ -1008,10 +885,6 @@ Outputs:
   APIURL:
     Value: !Sub https://${MetricsAPI}.execute-api.${AWS::Region}.amazonaws.com/api/metrics
     Description: Metrics API endpoint
-
-  PipelineName:
-    Value: !Ref Pipeline
-    Description: CodePipeline name (auto-deploys on git push)
 
   CDCInstanceId:
     Value: !Ref CDCInstance

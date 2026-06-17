@@ -242,6 +242,154 @@ class CDCConfig:
         )
 
 
+
+# ---------------------------------------------------------------------------
+# Table Rule Engine (DMS-style rules)
+# ---------------------------------------------------------------------------
+
+class TableRuleEngine:
+    """
+    DMS-style table selection using include/exclude rules with SQL LIKE wildcards.
+    Rules file format:
+    {
+        "rules": [
+            {"rule-type": "selection", "rule-action": "include",
+             "object-locator": {"schema-name": "public", "table-name": "%"}},
+            {"rule-type": "selection", "rule-action": "exclude",
+             "object-locator": {"schema-name": "public", "table-name": "tmp_%"}}
+        ]
+    }
+    """
+
+    def __init__(self, rules_file: Optional[str] = None):
+        self._rules_file = rules_file or os.environ.get("TABLE_RULES_FILE", "/opt/cdc/table_rules.json")
+        self._include_rules: List[Dict] = []
+        self._exclude_rules: List[Dict] = []
+        self._last_mtime: float = 0
+        self._load_rules()
+
+    def _load_rules(self):
+        """Load rules from the JSON file."""
+        try:
+            if not os.path.exists(self._rules_file):
+                self._include_rules = []
+                self._exclude_rules = []
+                return
+            mtime = os.path.getmtime(self._rules_file)
+            if mtime == self._last_mtime:
+                return  # No change
+            self._last_mtime = mtime
+            with open(self._rules_file) as f:
+                data = json.load(f)
+            self._include_rules = []
+            self._exclude_rules = []
+            for rule in data.get("rules", []):
+                if rule.get("rule-type") != "selection":
+                    continue
+                action = rule.get("rule-action", "include")
+                locator = rule.get("object-locator", {})
+                compiled = {
+                    "schema_pattern": self._like_to_regex(locator.get("schema-name", "%")),
+                    "table_pattern": self._like_to_regex(locator.get("table-name", "%")),
+                }
+                if action == "include":
+                    self._include_rules.append(compiled)
+                elif action == "exclude":
+                    self._exclude_rules.append(compiled)
+            logger.info(f"Table rules loaded: {len(self._include_rules)} include, "
+                       f"{len(self._exclude_rules)} exclude rules from {self._rules_file}")
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load table rules from {self._rules_file}: {e}")
+
+    def _like_to_regex(self, pattern: str) -> "re.Pattern":
+        """Convert SQL LIKE pattern to compiled regex. % = .*, _ = ."""
+        # Escape regex special chars except our wildcards
+        escaped = ""
+        for ch in pattern:
+            if ch == "%":
+                escaped += ".*"
+            elif ch == "_":
+                escaped += "."
+            elif ch in r"\.[]{}()*+?^$|":
+                escaped += "\\" + ch
+            else:
+                escaped += ch
+        return re.compile(f"^{escaped}$", re.IGNORECASE)
+
+    def should_replicate(self, schema: str, table: str) -> bool:
+        """Check if a table should be replicated based on the loaded rules."""
+        # Hot-reload if file changed
+        self._load_rules()
+
+        # If no include rules defined, default = include all
+        if self._include_rules:
+            included = any(
+                r["schema_pattern"].match(schema) and r["table_pattern"].match(table)
+                for r in self._include_rules
+            )
+            if not included:
+                return False
+
+        # Check excludes
+        excluded = any(
+            r["schema_pattern"].match(schema) and r["table_pattern"].match(table)
+            for r in self._exclude_rules
+        )
+        return not excluded
+
+    @property
+    def rules_count(self) -> int:
+        return len(self._include_rules) + len(self._exclude_rules)
+
+    @property
+    def rules_summary(self) -> str:
+        if self.rules_count == 0:
+            return "ALL"
+        return f"{len(self._include_rules)} include, {len(self._exclude_rules)} exclude"
+
+
+# ---------------------------------------------------------------------------
+# Replication Control Manager
+# ---------------------------------------------------------------------------
+
+class ControlManager:
+    """
+    Manages CDC service lifecycle state via a control file.
+    States: running, paused, stopped.
+    The service polls this every ~3 seconds.
+    """
+
+    def __init__(self, control_file: Optional[str] = None):
+        self._control_file = control_file or os.environ.get("CONTROL_FILE", "/opt/cdc/control.json")
+        self._last_state = "running"
+
+    def get_state(self) -> str:
+        """Read current state from control file. Missing file = running."""
+        try:
+            if not os.path.exists(self._control_file):
+                return "running"
+            with open(self._control_file) as f:
+                data = json.load(f)
+            state = data.get("state", "running")
+            if state != self._last_state:
+                logger.info(f"Control state changed: {self._last_state} -> {state}")
+                self._last_state = state
+            return state
+        except (json.JSONDecodeError, IOError):
+            return "running"
+
+    def set_state(self, state: str):
+        """Write state to control file."""
+        try:
+            os.makedirs(os.path.dirname(self._control_file), exist_ok=True)
+            with open(self._control_file, "w") as f:
+                json.dump({"state": state}, f)
+            self._last_state = state
+            logger.info(f"Control state set to: {state}")
+        except IOError as e:
+            logger.error(f"Failed to write control file: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Metrics Collector
 # ---------------------------------------------------------------------------
@@ -340,7 +488,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
     def _send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def do_OPTIONS(self):
@@ -367,6 +515,22 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(metrics, indent=2).encode())
 
+        elif self.path == "/table-mapping":
+            # Return current table rules file contents
+            rules_file = os.environ.get("TABLE_RULES_FILE", "/opt/cdc/table_rules.json")
+            rules_data = {"rules": []}
+            if os.path.exists(rules_file):
+                try:
+                    with open(rules_file) as f:
+                        rules_data = json.load(f)
+                except (json.JSONDecodeError, IOError):
+                    pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps(rules_data, indent=2).encode())
+
         elif self.path == "/ready":
             ready = self.service._is_streaming if self.service else False
             self.send_response(200 if ready else 503)
@@ -375,6 +539,75 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"ready" if ready else b"not ready")
 
+        else:
+            self.send_response(404)
+            self._send_cors_headers()
+            self.end_headers()
+
+    def do_POST(self):
+        """Handle POST /control to change replication state."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+
+        if self.path == "/control":
+            try:
+                data = json.loads(body)
+                new_state = data.get("state", "")
+                if new_state not in ("running", "paused", "stopped"):
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self._send_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "Invalid state. Use: running, paused, stopped"}).encode())
+                    return
+
+                # Write control file
+                control_file = os.environ.get("CONTROL_FILE", "/opt/cdc/control.json")
+                os.makedirs(os.path.dirname(control_file), exist_ok=True)
+                with open(control_file, "w") as f:
+                    json.dump({"state": new_state}, f)
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "state": new_state}).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+        elif self.path == "/table-mapping":
+            try:
+                rules_data = json.loads(body)
+                # Validate structure
+                if "rules" not in rules_data or not isinstance(rules_data["rules"], list):
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self._send_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "Invalid format. Expected: {\"rules\": [...]}"}).encode())
+                    return
+
+                # Write table rules file (hot-reloaded by TableRuleEngine)
+                rules_file = os.environ.get("TABLE_RULES_FILE", "/opt/cdc/table_rules.json")
+                os.makedirs(os.path.dirname(rules_file), exist_ok=True)
+                with open(rules_file, "w") as f:
+                    json.dump(rules_data, f, indent=2)
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "rules_count": len(rules_data["rules"])}).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
         else:
             self.send_response(404)
             self._send_cors_headers()
@@ -437,6 +670,7 @@ class TestDecodingParser:
     def __init__(self, config: CDCConfig):
         self.config = config
         self._table_pk_cache: Dict[str, List[str]] = {}
+        self._rule_engine = TableRuleEngine()
 
     def parse_message(self, payload: str, lsn: str, xid: int = 0) -> List[ChangeEvent]:
         """Parse a test_decoding message into ChangeEvent objects."""
@@ -460,7 +694,9 @@ class TestDecodingParser:
             operation = match.group("op")
             data = match.group("data")
 
-            # Check table filter
+            # Check table filter (DMS-style rules + legacy config)
+            if not self._rule_engine.should_replicate(schema, table):
+                continue
             if self.config.tables:
                 fqtn = f"{schema}.{table}"
                 if fqtn not in self.config.tables and table not in self.config.tables:
@@ -609,6 +845,7 @@ class PgOutputParser:
         # Cache relation metadata (relation_id -> {schema, table, columns, pk_cols})
         self._relations: Dict[int, dict] = {}
         self._current_xid: int = 0
+        self._rule_engine = TableRuleEngine()
         self._current_timestamp: str = ""
 
     def parse_message(self, payload: bytes, lsn: str, xid: int = 0) -> List[ChangeEvent]:
@@ -717,7 +954,9 @@ class PgOutputParser:
             if is_key:
                 pk_cols.append(col_name)
 
-        # Check table filter
+        # Check table filter (DMS-style rules + legacy config)
+        if not self._rule_engine.should_replicate(schema, table):
+            return
         if self.config.tables:
             fqtn = f"{schema}.{table}"
             if fqtn not in self.config.tables and table not in self.config.tables:
@@ -1530,6 +1769,8 @@ class CDCService:
         self._shutdown_event = threading.Event()
         self._is_streaming = False
         self._health_server = None
+        self._control_manager = ControlManager()
+        self._rule_engine = TableRuleEngine()
 
     def start(self):
         """Start all CDC service components."""
@@ -1593,8 +1834,31 @@ class CDCService:
 
     def _run_consumer(self, start_lsn: Optional[str]):
         try:
-            self._is_streaming = True
-            self._consumer.start(start_lsn)
+            while not self._shutdown_event.is_set():
+                state = self._control_manager.get_state()
+                
+                if state == "stopped":
+                    logger.info("Control state: stopped — shutting down")
+                    self._shutdown_event.set()
+                    break
+                elif state == "paused":
+                    if self._is_streaming:
+                        logger.info("Control state: paused — stopping consumption")
+                        self._consumer.stop()
+                        self._is_streaming = False
+                    time.sleep(3)
+                    continue
+                else:  # running
+                    if not self._is_streaming:
+                        logger.info("Control state: running — (re)starting consumption")
+                        # Get latest checkpoint for resume
+                        resume_lsn = self._processor.get_last_confirmed_lsn() or start_lsn
+                        self._is_streaming = True
+                        self._consumer.start(resume_lsn)
+                        # If start() returns normally, it means connection was lost
+                        self._is_streaming = False
+                    else:
+                        time.sleep(1)
         except Exception as e:
             logger.error(f"Consumer thread crashed: {e}", exc_info=True)
             self._is_streaming = False
@@ -1645,6 +1909,9 @@ class CDCService:
             "last_checkpoint_lsn": self._processor.get_last_confirmed_lsn(),
             "conflict_mode": self.config.conflict_mode.value,
             "queue_depth": self._event_queue.qsize(),
+            "control_state": self._control_manager.get_state(),
+            "table_rules_count": self._rule_engine.rules_count,
+            "table_rules_summary": self._rule_engine.rules_summary,
         }
 
     def _signal_handler(self, signum, frame):

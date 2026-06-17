@@ -38,6 +38,14 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
                 Configuration
             </a></li>
+            <li><a href="#" class="nav-link" data-page="loadtest">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                Load Test
+            </a></li>
+            <li><a href="#" class="nav-link" data-page="table-mapping">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18"/></svg>
+                Table Mapping
+            </a></li>
         </ul>
         <div class="sidebar-footer">
             <div class="status-indicator" id="connectionStatus">
@@ -182,12 +190,33 @@
             </div>
         </section>
 
-        <!-- Configuration Page -->
+<!-- Configuration Page -->
         <section id="page-config" class="page">
             <div class="page-header">
                 <h1>Configuration</h1>
             </div>
             <div class="config-grid">
+                <div class="config-card">
+                    <h3>Connection Settings</h3>
+                    <div class="config-form">
+                        <div class="form-group">
+                            <label for="cfgApiUrl">API Base URL</label>
+                            <input type="text" id="cfgApiUrl" class="form-input" placeholder="/api or http://host:port">
+                            <span class="form-help">Leave as /api for CloudFront routing, or enter direct URL (e.g., http://ec2-ip:8080)</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="cfgDirectHealth">Direct Health Endpoint (optional)</label>
+                            <input type="text" id="cfgDirectHealth" class="form-input" placeholder="http://ec2-public-ip:8080/health">
+                            <span class="form-help">If set, polls this URL directly for real-time CDC metrics instead of going through API Gateway</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="cfgRefreshInterval">Refresh Interval (seconds)</label>
+                            <input type="number" id="cfgRefreshInterval" class="form-input" value="5" min="1" max="60">
+                            <span class="form-help">How often to poll for new metrics</span>
+                        </div>
+                        <button class="btn btn-primary" onclick="CDC.saveConnectionSettings()">Connect</button>
+                    </div>
+                </div>
                 <div class="config-card">
                     <h3>Replication Settings</h3>
                     <div class="config-form">
@@ -239,6 +268,194 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- Load Test Page -->
+        <section id="page-loadtest" class="page">
+            <div class="page-header">
+                <h1>Load Test</h1>
+                <div class="header-actions">
+                    <span class="loadtest-status" id="loadtestStatusBadge">
+                        <span class="badge badge-muted">Idle</span>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Config Form -->
+            <div class="loadtest-config">
+                <div class="config-card">
+                    <h3>Test Configuration</h3>
+                    <div class="loadtest-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="ltDuration">Duration (seconds)</label>
+                                <input type="number" id="ltDuration" class="form-input" value="300" min="30" max="3600">
+                            </div>
+                            <div class="form-group">
+                                <label for="ltOrdersPerSec">Orders / Second</label>
+                                <input type="number" id="ltOrdersPerSec" class="form-input" value="20" min="1" max="500">
+                            </div>
+                            <div class="form-group">
+                                <label for="ltThreads">Threads</label>
+                                <input type="number" id="ltThreads" class="form-input" value="4" min="1" max="32">
+                            </div>
+                            <div class="form-group">
+                                <label for="ltMode">Mode</label>
+                                <select id="ltMode" class="form-input">
+                                    <option value="mixed">Mixed (60% INSERT, 30% UPDATE, 10% DELETE)</option>
+                                    <option value="insert">INSERT Only</option>
+                                    <option value="update">UPDATE Only</option>
+                                    <option value="delete">DELETE Only</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button class="btn btn-primary btn-lg" id="btnStartTest" onclick="CDC.startLoadTest()">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                Start Load Test
+                            </button>
+                            <button class="btn btn-danger btn-lg" id="btnStopTest" onclick="CDC.stopLoadTest()" style="display:none;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
+                                Stop Test
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Section -->
+            <div class="loadtest-progress" id="loadtestProgress" style="display:none;">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+                        <div class="kpi-content">
+                            <span class="kpi-label">Elapsed</span>
+                            <span class="kpi-value" id="lt-elapsed">--</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                        <div class="kpi-content">
+                            <span class="kpi-label">Orders Placed</span>
+                            <span class="kpi-value" id="lt-orders">--</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon purple"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+                        <div class="kpi-content">
+                            <span class="kpi-label">DML Operations</span>
+                            <span class="kpi-value" id="lt-dml">--</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon orange"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+                        <div class="kpi-content">
+                            <span class="kpi-label">Effective TPS</span>
+                            <span class="kpi-value" id="lt-tps">--</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-icon red"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>
+                        <div class="kpi-content">
+                            <span class="kpi-label">Errors</span>
+                            <span class="kpi-value" id="lt-errors">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Log Output -->
+            <div class="loadtest-log-section">
+                <div class="config-card">
+                    <h3>Live Output</h3>
+                    <div class="loadtest-log" id="loadtestLog">
+                        <div class="log-placeholder">Start a load test to see live output...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="loadtest-results" id="loadtestResults" style="display:none;">
+                <div class="config-card">
+                    <h3>Data Integrity Validation</h3>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>Table</th><th>Source Rows</th><th>Target Rows</th><th>Match</th><th>Diff</th></tr>
+                            </thead>
+                            <tbody id="ltIntegrityBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Table Mapping Page -->
+        <section id="page-table-mapping" class="page">
+            <div class="page-header">
+                <h1>Table Mapping &amp; Control</h1>
+            </div>
+
+            <!-- Replication Control -->
+            <div class="config-card">
+                <h3>Replication Control</h3>
+                <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px;">
+                    <span style="color: var(--text-secondary); font-size: 14px;">Current State:</span>
+                    <span class="status-badge running" id="controlStateBadge">&#x1F7E2; Running</span>
+                </div>
+                <div class="control-buttons">
+                    <button class="btn btn-success" onclick="CDC.controlReplication('start')">&#x25B6; Start</button>
+                    <button class="btn btn-warning" onclick="CDC.controlReplication('pause')">&#x23F8; Pause</button>
+                    <button class="btn btn-primary" onclick="CDC.controlReplication('resume')">&#x23F5; Resume</button>
+                    <button class="btn btn-danger" onclick="CDC.controlReplication('stop')">&#x23F9; Stop</button>
+                </div>
+            </div>
+
+            <!-- Table Selection Rules -->
+            <div class="config-card" style="margin-top: 20px;">
+                <h3>Table Selection Rules (DMS Format)</h3>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">
+                    Define which tables to replicate using DMS-style JSON rules. Use <code style="color: var(--accent-blue);">%</code> for wildcard matching.
+                </p>
+                <textarea id="rulesTextarea" class="rules-textarea" placeholder='{
+  "rules": [
+    {
+      "rule-type": "selection",
+      "rule-id": "1",
+      "rule-name": "include-all-public",
+      "object-locator": {
+        "schema-name": "public",
+        "table-name": "%"
+      },
+      "rule-action": "include"
+    },
+    {
+      "rule-type": "selection",
+      "rule-id": "2",
+      "rule-name": "exclude-temp",
+      "object-locator": {
+        "schema-name": "public",
+        "table-name": "tmp_%"
+      },
+      "rule-action": "exclude"
+    }
+  ]
+}'></textarea>
+                <div id="validationMessage" class="validation-message" style="display:none;"></div>
+                <div style="display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap;">
+                    <input type="file" id="rulesFileInput" accept=".json" style="display:none;" onchange="CDC.uploadRulesFile(event)">
+                    <button class="btn" onclick="document.getElementById('rulesFileInput').click()">&#x1F4C1; Upload JSON</button>
+                    <button class="btn" onclick="CDC.validateTableMapping()">&#x2713; Validate</button>
+                    <button class="btn btn-primary" onclick="CDC.applyTableMapping()">Apply Rules</button>
+                </div>
+            </div>
+
+            <!-- Current Active Rules -->
+            <div class="config-card" style="margin-top: 20px;">
+                <h3>Currently Active Rules</h3>
+                <pre id="currentRulesDisplay" style="background: var(--bg-primary); padding: 16px; border-radius: 8px; font-size: 0.8rem; color: var(--text-secondary); overflow-x: auto; max-height: 200px; border: 1px solid var(--border-color);">Loading...</pre>
             </div>
         </section>
     </main>

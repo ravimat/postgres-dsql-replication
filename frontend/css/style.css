@@ -579,3 +579,196 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+
+/* ============================================
+   Load Test Page Styles
+   ============================================ */
+
+.loadtest-config {
+    margin-bottom: 24px;
+}
+
+.loadtest-form .form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.btn-lg {
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.btn-danger {
+    background: var(--accent-red);
+    border-color: var(--accent-red);
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+
+.badge-muted { background: rgba(92,99,120,0.12); color: var(--text-muted); }
+.badge-blue { background: rgba(59,130,246,0.12); color: var(--accent-blue); }
+
+.loadtest-progress {
+    margin-bottom: 24px;
+}
+
+.loadtest-log-section {
+    margin-bottom: 24px;
+}
+
+.loadtest-log {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 16px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--text-secondary);
+}
+
+.loadtest-log .log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+    border-bottom: 1px solid rgba(45,51,72,0.3);
+    padding: 2px 0;
+}
+
+.loadtest-log .log-line.error {
+    color: var(--accent-red);
+}
+
+.loadtest-log .log-line.success {
+    color: var(--accent-green);
+}
+
+.loadtest-log .log-line.highlight {
+    color: var(--accent-blue);
+}
+
+.loadtest-log .log-placeholder {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.loadtest-results {
+    margin-top: 24px;
+}
+
+
+/* ============================================
+   Table Mapping & Replication Control Styles
+   ============================================ */
+
+.control-buttons {
+    display: flex;
+    gap: 12px;
+    margin: 16px 0;
+    flex-wrap: wrap;
+}
+
+.btn-success {
+    background: #4ade80;
+    border-color: #4ade80;
+    color: #000;
+    font-weight: 600;
+}
+
+.btn-success:hover {
+    opacity: 0.85;
+    border-color: #4ade80;
+}
+
+.btn-warning {
+    background: #fbbf24;
+    border-color: #fbbf24;
+    color: #000;
+    font-weight: 600;
+}
+
+.btn-warning:hover {
+    opacity: 0.85;
+    border-color: #fbbf24;
+}
+
+.rules-textarea {
+    min-height: 300px;
+    font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+    font-size: 0.85rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    width: 100%;
+    padding: 16px;
+    border-radius: var(--radius);
+    resize: vertical;
+    line-height: 1.6;
+}
+
+.rules-textarea:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.rules-textarea::placeholder {
+    color: var(--text-muted);
+}
+
+.validation-message {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+}
+
+.validation-message.success {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+}
+
+.validation-message.error {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 100px;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
+.status-badge.running {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+}
+
+.status-badge.paused {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+}
+
+.status-badge.stopped {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+}

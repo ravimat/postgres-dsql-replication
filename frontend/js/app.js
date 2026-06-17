@@ -7,7 +7,8 @@ const CDC = (() => {
     // Configuration — set via environment or inline during deployment
     const CONFIG = {
         apiBaseUrl: window.CDC_API_URL || '/api', // API Gateway endpoint
-        refreshInterval: 15000, // 15 seconds
+        directHealthUrl: localStorage.getItem('cdc_direct_health') || '', // Direct health endpoint
+        refreshInterval: parseInt(localStorage.getItem('cdc_refresh_interval') || '5') * 1000,
         metricPeriod: 3600, // 1 hour of history
     };
 
@@ -17,9 +18,11 @@ const CDC = (() => {
     // ─── Initialization ───────────────────────────────────────────────
     function init() {
         setupNavigation();
+        loadConnectionSettings();
         initCharts();
         refresh();
         startAutoRefresh();
+        loadTableMapping();
     }
 
     // ─── Navigation ───────────────────────────────────────────────────
@@ -108,17 +111,31 @@ const CDC = (() => {
 
     async function fetchHealth() {
         try {
-            const response = await fetch(`${CONFIG.apiBaseUrl}/health`);
+            const url = CONFIG.directHealthUrl || `${CONFIG.apiBaseUrl}/health`;
+            const response = await fetch(url);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await response.json();
         } catch (err) {
             console.error('Failed to fetch health:', err);
+            if (CONFIG.directHealthUrl) {
+                document.getElementById('statusBadge')?.setAttribute('data-status', 'error');
+            }
             return null;
         }
     }
 
     // ─── Refresh / Update ─────────────────────────────────────────────
     async function refresh() {
+        // Update control badge from health data
+        try {
+            const url = CONFIG.directHealthUrl || CONFIG.apiBaseUrl + '/health';
+            const r = await fetch(url);
+            if (r.ok) {
+                const h = await r.json();
+                if (h.control_state) updateControlBadge(h.control_state);
+            }
+        } catch(e) {}
+
         const [metrics, health] = await Promise.all([fetchMetrics(), fetchHealth()]);
 
         if (metrics) {
@@ -131,6 +148,9 @@ const CDC = (() => {
 
         if (health) {
             updateServiceInfo(health);
+            if (health.control_state) {
+                updateControlStateBadge(health.control_state);
+            }
         }
 
         document.getElementById('lastUpdated').textContent =
@@ -303,9 +323,466 @@ const CDC = (() => {
         }, 3000);
     }
 
+
+    // ─── Load Test ───────────────────────────────────────────────────────
+    let loadTestTimer = null;
+    let loadTestCommandId = null;
+
+    async function startLoadTest() {
+        const config = {
+            duration: parseInt(document.getElementById('ltDuration').value, 10),
+            orders_per_sec: parseInt(document.getElementById('ltOrdersPerSec').value, 10),
+            threads: parseInt(document.getElementById('ltThreads').value, 10),
+            mode: document.getElementById('ltMode').value,
+        };
+
+        // Update UI
+        document.getElementById('btnStartTest').style.display = 'none';
+        document.getElementById('btnStopTest').style.display = 'inline-flex';
+        document.getElementById('loadtestProgress').style.display = 'block';
+        document.getElementById('loadtestResults').style.display = 'none';
+        document.getElementById('loadtestStatusBadge').innerHTML = '<span class="badge badge-blue">Running</span>';
+        clearLoadTestLog();
+        appendLog('Starting load test...', 'highlight');
+        appendLog(`Config: duration=${config.duration}s, orders/sec=${config.orders_per_sec}, threads=${config.threads}, mode=${config.mode}`, 'highlight');
+
+        try {
+            const response = await fetch(`${CONFIG.apiBaseUrl}/loadtest`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(config),
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+            loadTestCommandId = result.command_id;
+            appendLog(`Test started. Command ID: ${loadTestCommandId}`, 'success');
+
+            // Start polling for status
+            loadTestTimer = setInterval(pollLoadTestStatus, 5000);
+        } catch (err) {
+            appendLog(`Failed to start: ${err.message}`, 'error');
+            resetLoadTestUI();
+        }
+    }
+
+    async function stopLoadTest() {
+        appendLog('Stopping load test...', 'highlight');
+        if (loadTestTimer) {
+            clearInterval(loadTestTimer);
+            loadTestTimer = null;
+        }
+        resetLoadTestUI();
+    }
+
+    async function pollLoadTestStatus() {
+        if (!loadTestCommandId) return;
+
+        try {
+            const response = await fetch(`${CONFIG.apiBaseUrl}/loadtest/status?command_id=${loadTestCommandId}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+
+            if (data.output) {
+                updateLoadTestLog(data.output);
+            }
+
+            if (data.progress) {
+                updateLoadTestProgress(data.progress);
+            }
+
+            if (data.status === 'complete') {
+                clearInterval(loadTestTimer);
+                loadTestTimer = null;
+                appendLog('\n✓ Load test completed!', 'success');
+                document.getElementById('loadtestStatusBadge').innerHTML = '<span class="badge badge-green">Complete</span>';
+                resetLoadTestUI();
+                if (data.results) {
+                    showLoadTestResults(data.results);
+                }
+            } else if (data.status === 'failed') {
+                clearInterval(loadTestTimer);
+                loadTestTimer = null;
+                appendLog(`\n✗ Load test failed: ${data.error || 'Unknown error'}`, 'error');
+                document.getElementById('loadtestStatusBadge').innerHTML = '<span class="badge badge-red">Failed</span>';
+                resetLoadTestUI();
+            }
+        } catch (err) {
+            appendLog(`Poll error: ${err.message}`, 'error');
+        }
+    }
+
+    function updateLoadTestProgress(progress) {
+        if (progress.elapsed) setText('lt-elapsed', progress.elapsed);
+        if (progress.orders_placed !== undefined) setText('lt-orders', formatNumber(progress.orders_placed));
+        if (progress.total_dml_operations !== undefined) setText('lt-dml', formatNumber(progress.total_dml_operations));
+        if (progress.effective_tps !== undefined) setText('lt-tps', formatNumber(progress.effective_tps, 1));
+        if (progress.errors !== undefined) setText('lt-errors', formatNumber(progress.errors));
+    }
+
+    function showLoadTestResults(results) {
+        document.getElementById('loadtestResults').style.display = 'block';
+        const tbody = document.getElementById('ltIntegrityBody');
+
+        if (results.integrity) {
+            const tables = Object.entries(results.integrity);
+            tbody.innerHTML = tables.map(([table, data]) => `
+                <tr>
+                    <td><code>${table}</code></td>
+                    <td>${formatNumber(data.source || 0)}</td>
+                    <td>${formatNumber(data.target || 0)}</td>
+                    <td><span class="badge badge-${data.match ? 'green' : 'red'}">${data.match ? 'PASS' : 'FAIL'}</span></td>
+                    <td>${data.diff || 0}</td>
+                </tr>
+            `).join('');
+        }
+    }
+
+    function clearLoadTestLog() {
+        document.getElementById('loadtestLog').innerHTML = '';
+    }
+
+    function appendLog(message, className) {
+        const container = document.getElementById('loadtestLog');
+        const line = document.createElement('div');
+        line.className = `log-line ${className || ''}`;
+        line.textContent = message;
+        container.appendChild(line);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function updateLoadTestLog(output) {
+        const container = document.getElementById('loadtestLog');
+        const lines = output.split('\n').filter(l => l.trim());
+        // Only show last 100 lines
+        const recentLines = lines.slice(-100);
+        container.innerHTML = recentLines.map(line => {
+            let cls = '';
+            if (line.includes('ERROR') || line.includes('✗')) cls = 'error';
+            else if (line.includes('✓') || line.includes('complete')) cls = 'success';
+            else if (line.includes('[') && line.includes(']')) cls = 'highlight';
+            return `<div class="log-line ${cls}">${escapeHtml(line)}</div>`;
+        }).join('');
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function resetLoadTestUI() {
+        document.getElementById('btnStartTest').style.display = 'inline-flex';
+        document.getElementById('btnStopTest').style.display = 'none';
+    }
+
     // ─── Public API ───────────────────────────────────────────────────
-    return { init, refresh, saveConfig };
+    // ─── Connection Settings ─────────────────────────────────────────
+    function loadConnectionSettings() {
+        const apiUrl = localStorage.getItem('cdc_api_url');
+        const directHealth = localStorage.getItem('cdc_direct_health');
+        const interval = localStorage.getItem('cdc_refresh_interval');
+
+        if (apiUrl) CONFIG.apiBaseUrl = apiUrl;
+        if (directHealth) CONFIG.directHealthUrl = directHealth;
+        if (interval) CONFIG.refreshInterval = parseInt(interval) * 1000;
+
+        // Populate form fields if on config page
+        const apiInput = document.getElementById('cfgApiUrl');
+        const healthInput = document.getElementById('cfgDirectHealth');
+        const intervalInput = document.getElementById('cfgRefreshInterval');
+        if (apiInput) apiInput.value = CONFIG.apiBaseUrl;
+        if (healthInput) healthInput.value = CONFIG.directHealthUrl;
+        if (intervalInput) intervalInput.value = CONFIG.refreshInterval / 1000;
+    }
+
+    function saveConnectionSettings() {
+        const apiUrl = document.getElementById('cfgApiUrl').value.trim();
+        const directHealth = document.getElementById('cfgDirectHealth').value.trim();
+        const interval = document.getElementById('cfgRefreshInterval').value;
+
+        if (apiUrl) {
+            CONFIG.apiBaseUrl = apiUrl;
+            localStorage.setItem('cdc_api_url', apiUrl);
+        }
+        CONFIG.directHealthUrl = directHealth;
+        localStorage.setItem('cdc_direct_health', directHealth);
+        CONFIG.refreshInterval = parseInt(interval) * 1000;
+        localStorage.setItem('cdc_refresh_interval', interval);
+
+        // Restart polling with new settings
+        if (refreshTimer) clearInterval(refreshTimer);
+        startAutoRefresh();
+        refresh();
+
+        alert('Connection settings saved! Dashboard will now poll: ' + (directHealth || apiUrl + '/health'));
+    }
+
+
+    // ─── Replication Control ─────────────────────────────────────────
+    async function controlReplication(action) {
+        const stateMap = {start: 'running', resume: 'running', pause: 'paused', stop: 'stopped'};
+        const newState = stateMap[action] || action;
+        try {
+            const url = CONFIG.directHealthUrl ? CONFIG.directHealthUrl.replace('/health', '/control') : CONFIG.apiBaseUrl + '/control';
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({state: newState}),
+            });
+            const data = await resp.json();
+            if (data.status === 'ok' || data.state) {
+                updateControlBadge(newState);
+                alert('Replication state changed to: ' + newState);
+            } else {
+                alert('Error: ' + (data.error || 'Unknown'));
+            }
+        } catch (e) {
+            alert('Failed to change state: ' + e.message);
+        }
+    }
+
+    function updateControlBadge(state) {
+        const badge = document.getElementById('controlStateBadge');
+        if (!badge) return;
+        badge.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+        badge.className = 'badge badge-' + state;
+    }
+
+    // ─── Table Mapping ───────────────────────────────────────────────
+    function validateTableMapping() {
+        const textarea = document.getElementById('tableRulesInput');
+        const msgDiv = document.getElementById('rulesValidation');
+        if (!textarea || !msgDiv) return false;
+        try {
+            const data = JSON.parse(textarea.value);
+            if (!data.rules || !Array.isArray(data.rules)) {
+                throw new Error('JSON must have a "rules" array');
+            }
+            for (const rule of data.rules) {
+                if (rule['rule-type'] !== 'selection') continue;
+                if (!rule['object-locator'] || !rule['object-locator']['schema-name'] || !rule['object-locator']['table-name']) {
+                    throw new Error('Each rule must have object-locator with schema-name and table-name');
+                }
+                if (!['include', 'exclude'].includes(rule['rule-action'])) {
+                    throw new Error('rule-action must be "include" or "exclude"');
+                }
+            }
+            const count = data.rules.filter(r => r['rule-type'] === 'selection').length;
+            msgDiv.className = 'validation-message success';
+            msgDiv.textContent = '✓ Valid — ' + count + ' selection rule(s) found';
+            return true;
+        } catch (e) {
+            msgDiv.className = 'validation-message error';
+            msgDiv.textContent = '✗ ' + e.message;
+            return false;
+        }
+    }
+
+    async function applyTableMapping() {
+        if (!validateTableMapping()) return;
+        const rulesJson = document.getElementById('tableRulesInput').value;
+        try {
+            const resp = await fetch(CONFIG.apiBaseUrl + '/table-mapping', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: rulesJson,
+            });
+            const data = await resp.json();
+            if (data.status === 'applied') {
+                alert('Table mapping rules applied! (' + (data.rules_count || '?') + ' rules). Service restarting...');
+                loadTableMapping();
+            } else {
+                alert('Error: ' + (data.error || JSON.stringify(data)));
+            }
+        } catch (e) {
+            alert('Failed to apply rules: ' + e.message);
+        }
+    }
+
+    async function loadTableMapping() {
+        const display = document.getElementById('activeRulesDisplay');
+        if (!display) return;
+        try {
+            const resp = await fetch(CONFIG.apiBaseUrl + '/table-mapping');
+            const data = await resp.json();
+            if (data.rules) {
+                display.textContent = JSON.stringify(data, null, 2);
+            } else if (data.content) {
+                display.textContent = data.content;
+            } else {
+                display.textContent = JSON.stringify(data, null, 2);
+            }
+        } catch (e) {
+            display.textContent = 'No rules configured (replicating ALL tables)';
+        }
+    }
+
+    function uploadRulesFile() {
+        const input = document.getElementById('rulesFileInput');
+        if (!input || !input.files[0]) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            document.getElementById('tableRulesInput').value = e.target.result;
+            validateTableMapping();
+        };
+        reader.readAsText(input.files[0]);
+    }
+
+        return { init, refresh, saveConfig, saveConnectionSettings, startLoadTest, stopLoadTest, controlReplication, applyTableMapping, validateTableMapping, uploadRulesFile, loadTableMapping };
 })();
 
 // Boot
 document.addEventListener('DOMContentLoaded', CDC.init);
+    // ─── Table Mapping & Replication Control ──────────────────────────────────────
+
+    async function controlReplication(action) {
+        try {
+            const response = await fetch(`${CONFIG.apiBaseUrl}/control`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action }),
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+
+            // Update badge immediately
+            updateControlStateBadge(result.status || action);
+            showToast(`Replication ${action}: ${result.status || 'OK'}`, 'success');
+
+            // Refresh to get latest health
+            setTimeout(refresh, 1000);
+        } catch (err) {
+            console.error('Control action failed:', err);
+            showToast(`Failed to ${action}: ${err.message}`, 'error');
+        }
+    }
+
+    function updateControlStateBadge(state) {
+        const badge = document.getElementById('controlStateBadge');
+        if (!badge) return;
+
+        const stateMap = {
+            running: { text: '\u{1F7E2} Running', cls: 'running' },
+            paused: { text: '\u{1F7E1} Paused', cls: 'paused' },
+            stopped: { text: '\u{1F534} Stopped', cls: 'stopped' },
+            start: { text: '\u{1F7E2} Running', cls: 'running' },
+            resume: { text: '\u{1F7E2} Running', cls: 'running' },
+            pause: { text: '\u{1F7E1} Paused', cls: 'paused' },
+            stop: { text: '\u{1F534} Stopped', cls: 'stopped' },
+        };
+
+        const info = stateMap[state] || stateMap.running;
+        badge.textContent = info.text;
+        badge.className = `status-badge ${info.cls}`;
+    }
+
+    function validateTableMapping() {
+        const textarea = document.getElementById('rulesTextarea');
+        const msgDiv = document.getElementById('validationMessage');
+        const text = textarea.value.trim();
+
+        if (!text) {
+            showValidationMessage(msgDiv, 'Please enter or upload a rules JSON document.', 'error');
+            return false;
+        }
+
+        try {
+            const parsed = JSON.parse(text);
+
+            if (!parsed.rules || !Array.isArray(parsed.rules)) {
+                showValidationMessage(msgDiv, 'Invalid: JSON must contain a "rules" array.', 'error');
+                return false;
+            }
+
+            // Validate each rule
+            for (let i = 0; i < parsed.rules.length; i++) {
+                const rule = parsed.rules[i];
+                if (rule['rule-type'] !== 'selection') {
+                    showValidationMessage(msgDiv, `Rule ${i + 1}: rule-type must be "selection".`, 'error');
+                    return false;
+                }
+                if (!rule['object-locator'] || !rule['object-locator']['schema-name'] || !rule['object-locator']['table-name']) {
+                    showValidationMessage(msgDiv, `Rule ${i + 1}: missing object-locator with schema-name and table-name.`, 'error');
+                    return false;
+                }
+                if (!['include', 'exclude'].includes(rule['rule-action'])) {
+                    showValidationMessage(msgDiv, `Rule ${i + 1}: rule-action must be "include" or "exclude".`, 'error');
+                    return false;
+                }
+            }
+
+            const includes = parsed.rules.filter(r => r['rule-action'] === 'include').length;
+            const excludes = parsed.rules.filter(r => r['rule-action'] === 'exclude').length;
+            showValidationMessage(msgDiv, `\u2713 Valid! ${parsed.rules.length} rules (${includes} include, ${excludes} exclude).`, 'success');
+            return true;
+        } catch (e) {
+            showValidationMessage(msgDiv, `Invalid JSON: ${e.message}`, 'error');
+            return false;
+        }
+    }
+
+    async function applyTableMapping() {
+        if (!validateTableMapping()) return;
+
+        const textarea = document.getElementById('rulesTextarea');
+        const rules = JSON.parse(textarea.value.trim());
+
+        try {
+            const response = await fetch(`${CONFIG.apiBaseUrl}/table-mapping`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(rules),
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const result = await response.json();
+            showToast(`Table mapping applied! ${result.rules_count || ''} rules active.`, 'success');
+
+            // Refresh the active rules display
+            loadTableMapping();
+        } catch (err) {
+            console.error('Failed to apply table mapping:', err);
+            showToast(`Failed to apply: ${err.message}`, 'error');
+        }
+    }
+
+    async function loadTableMapping() {
+        const display = document.getElementById('currentRulesDisplay');
+        if (!display) return;
+
+        try {
+            const response = await fetch(`${CONFIG.apiBaseUrl}/table-mapping`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+
+            if (data && data.rules && data.rules.length > 0) {
+                display.textContent = JSON.stringify(data, null, 2);
+            } else {
+                display.textContent = 'No rules configured — ALL tables will be replicated.';
+            }
+        } catch (err) {
+            display.textContent = 'Unable to fetch current rules (API unavailable).';
+        }
+    }
+
+    function uploadRulesFile(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const textarea = document.getElementById('rulesTextarea');
+            textarea.value = e.target.result;
+            showToast(`Loaded ${file.name}`, 'success');
+        };
+        reader.onerror = function() {
+            showToast('Failed to read file', 'error');
+        };
+        reader.readAsText(file);
+    }
+
+    function showValidationMessage(el, message, type) {
+        if (!el) return;
+        el.style.display = 'block';
+        el.textContent = message;
+        el.className = `validation-message ${type}`;
+    }
+
+    

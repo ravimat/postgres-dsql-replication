@@ -23,19 +23,8 @@ Parameters:
     Default: main
     Description: Branch to deploy from
 
-  # --- Database Config ---
-  SourceSecretArn:
-    Type: String
-    Description: ARN or name of existing Secrets Manager secret. Secret must contain host, port, dbname, username, and password. Required format - {"username":"xxx","password":"xxx","engine":"postgres","host":"xxx.region.rds.amazonaws.com","port":5432,"dbname":"postgres","dbClusterIdentifier":"xxx"}
   
-  TargetDSQLEndpoint:
-    Type: String
-    Description: Aurora DSQL cluster endpoint (e.g., xxx.dsql.us-east-1.on.aws)
   
-  DSQLRegion:
-    Type: String
-    Default: us-east-1
-    Description: AWS region of the DSQL cluster
   
   ConflictMode:
     Type: String
@@ -119,9 +108,6 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action:
-                  - secretsmanager:GetSecretValue
-                Resource:
-                  - !Ref SourceSecretArn
               - Effect: Allow
                 Action:
                   - s3:PutObject
@@ -187,16 +173,14 @@ Resources:
           # Install Python dependencies
           python3.11 -m pip install psycopg2-binary boto3
 
-          # Get SOURCE_DSN from Secrets Manager (handles both plain DSN and RDS JSON format)
-          SECRET_RAW=$(aws secretsmanager get-secret-value --secret-id ${SourceSecretArn} --query SecretString --output text --region ${AWS::Region})
-          SOURCE_DSN=$(python3.11 -c "import json,sys;r=sys.argv[1];s=json.loads(r) if r.startswith('{') else None;print('host='+s['host']+' port='+str(s.get('port',5432))+' dbname='+s.get('dbname','postgres')+' user='+s['username']+' password=[REDACTED_PASSWORD] sslmode=require') if s else print(r)" "$SECRET_RAW")
+          # Database connections configured via frontend dashboard
 
           # Create environment file
           cat > /opt/cdc/.env << ENVEOF
-          SOURCE_DSN="${!SOURCE_DSN}"
-          TARGET_DSN="host=${TargetDSQLEndpoint} port=5432 dbname=postgres user=admin sslmode=require"
-          DSQL_HOSTNAME=${TargetDSQLEndpoint}
-          DSQL_REGION=${DSQLRegion}
+          SOURCE_DSN=""
+          TARGET_DSN=""
+          DSQL_HOSTNAME=
+          DSQL_REGION=${AWS::Region}
           SLOT_NAME=${SlotName}
           DECODING_PLUGIN=${DecodingPlugin}
           CONFLICT_MODE=${ConflictMode}
@@ -240,6 +224,7 @@ Resources:
           # Start the service
           systemctl daemon-reload
           systemctl enable cdc-service
+
           systemctl start cdc-service
 
 

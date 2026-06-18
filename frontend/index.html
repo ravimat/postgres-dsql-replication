@@ -109,8 +109,8 @@
                     </div>
                     <div class="form-group">
                         <label for="cfgSlotName">Replication Slot</label>
-                        <input type="text" id="cfgSlotName" class="form-input" value="dsql_cdc_slot" readonly>
-                        <span class="form-help">PostgreSQL logical replication slot (read-only)</span>
+                        <input type="text" id="cfgSlotName" class="form-input" value="dsql_cdc_slot" placeholder="e.g., dsql_cdc_slot">
+                        <span class="form-help">PostgreSQL logical replication slot name (must already exist on source)</span>
                     </div>
                     <button class="btn btn-primary" onclick="CDC.saveConfig()">Save Configuration</button>
                 </div>

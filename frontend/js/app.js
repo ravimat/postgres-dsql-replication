@@ -311,6 +311,7 @@ const CDC = (() => {
         const payload = {
             batch_size: parseInt(document.getElementById('cfgBatchSize').value, 10),
             conflict_mode: document.getElementById('cfgConflictMode').value,
+            slot_name: document.getElementById('cfgSlotName').value.trim(),
         };
 
         try {
@@ -321,10 +322,20 @@ const CDC = (() => {
             });
 
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            showToast('Configuration saved successfully', 'success');
+            const msg = document.getElementById('configResult');
+            if (msg) {
+                msg.style.display = 'block';
+                msg.className = 'validation-message success';
+                msg.textContent = '✓ Configuration saved! Service restarting with new settings.';
+            }
         } catch (err) {
             console.error('Failed to save config:', err);
-            showToast('Failed to save configuration', 'error');
+            const msg = document.getElementById('configResult');
+            if (msg) {
+                msg.style.display = 'block';
+                msg.className = 'validation-message error';
+                msg.textContent = '✗ Failed to save: ' + err.message;
+            }
         }
     }
 

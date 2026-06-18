@@ -424,6 +424,8 @@ Resources:
                   return get_health_path('/loadtest/tables')
               elif '/loadtest' in path and method == 'POST':
                   return post_loadtest(body)
+              elif '/config' in path and method == 'POST':
+                  return post_config(body)
               elif '/test-connection' in path and method == 'POST':
                   return post_test_connection(body)
               elif '/dsn' in path and method == 'POST':
@@ -604,7 +606,13 @@ Resources:
                       script = "import psycopg2,boto3\n"
                       script += "c=boto3.client('dsql',region_name='" + region + "')\n"
                       script += "token=c.generate_db_connect_admin_auth_token(Hostname='" + target_dsn + "',Region='" + region + "',ExpiresIn=3600)\n"
-                      script += "conn=psycopg2.connect(host='" + target_dsn + "',port=5432,dbname='postgres',user='admin',password=[REDACTED_PASSWORD]
+                      script += "conn=psycopg2.connect(\n"
+                      script += "    host='" + target_dsn + "',\n"
+                      script += "    port=5432,\n"
+                      script += "    dbname='postgres',\n"
+                      script += "    user='admin',\n"
+                      script += "    password=token,\n"
+                      script += "    sslmode='require')\n"
                       script += "conn.cursor().execute('SELECT 1')\n"
                       script += "print('DSQL connected')\n"
                       script += "conn.close()\n"
@@ -651,6 +659,22 @@ Resources:
               cmd = ' && '.join(cmds)
               ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]})
               return response(200, {'status': 'ok', 'message': 'DSN updated, service restarting'})
+
+          def post_config(body):
+              ssm = boto3.client('ssm')
+              instance_id = os.environ['CDC_INSTANCE_ID']
+              cmds = []
+              if body.get('batch_size'):
+                  cmds.append(f"sed -i 's|^BATCH_SIZE=.*|BATCH_SIZE={int(body[\"batch_size\"])}|' /opt/cdc/.env")
+              if body.get('conflict_mode'):
+                  cmds.append(f"sed -i 's|^CONFLICT_MODE=.*|CONFLICT_MODE={body[\"conflict_mode\"]}|' /opt/cdc/.env")
+              if body.get('slot_name'):
+                  cmds.append(f"sed -i 's|^SLOT_NAME=.*|SLOT_NAME={body[\"slot_name\"]}|' /opt/cdc/.env")
+              if cmds:
+                  cmds.append('systemctl restart cdc-service')
+                  cmd = ' && '.join(cmds)
+                  ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]})
+              return response(200, {'status': 'ok', 'message': 'Configuration saved, service restarting'})
 
           def response(code, body):
               return {

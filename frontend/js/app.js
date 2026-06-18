@@ -295,15 +295,21 @@ const CDC = (() => {
         }
         setText('infoRegion', health.region || 'us-east-1');
 
-        // Populate current DSN fields (show what's configured, don't overwrite user edits)
+        // Populate ALL config fields from health endpoint (always update to reflect current .env)
         const srcInput = document.getElementById('cfgSourceDSN');
         const tgtInput = document.getElementById('cfgTargetDSN');
-        if (srcInput && !srcInput.value && health.source_dsn) {
+        if (srcInput && health.source_dsn) {
             srcInput.value = health.source_dsn;
         }
-        if (tgtInput && !tgtInput.value && health.target_endpoint) {
+        if (tgtInput && health.target_endpoint) {
             tgtInput.value = health.target_endpoint;
         }
+        const batchInput = document.getElementById('cfgBatchSize');
+        const conflictInput = document.getElementById('cfgConflictMode');
+        const slotInput = document.getElementById('cfgSlotName');
+        if (batchInput && health.batch_size) batchInput.value = health.batch_size;
+        if (conflictInput && health.conflict_mode) conflictInput.value = health.conflict_mode;
+        if (slotInput && health.slot_name) slotInput.value = health.slot_name;
     }
 
     // ─── Configuration ────────────────────────────────────────────────

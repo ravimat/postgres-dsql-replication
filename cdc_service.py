@@ -2014,6 +2014,8 @@ class CDCService:
             "target_endpoint": target_display,
             "source_dsn": source_dsn_masked,
             "target_endpoint": os.environ.get("DSQL_HOSTNAME", ""),
+            "batch_size": self.config.batch_size,
+            "slot_name": self.config.slot_name,
         }
 
     def _signal_handler(self, signum, frame):

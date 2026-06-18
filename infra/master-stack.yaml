@@ -525,7 +525,7 @@ Resources:
               state = state_map.get(action, action)
               if state not in ('running', 'paused', 'stopped'):
                   return response(400, {'error': f'Invalid: {action}'})
-              cmd = f'echo \'{{\"state\": \"{state}\"}}\' > /opt/cdc/control.json'
+              cmd = 'echo \'{"state": "' + state + '"}\' > /opt/cdc/control.json'
               if state == 'running': cmd += ' && systemctl start cdc-service 2>/dev/null || true'
               ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]})
               return response(200, {'status': 'ok', 'state': state})
@@ -653,9 +653,9 @@ Resources:
               # Update .env file on EC2 and restart service
               cmds = []
               if source_dsn:
-                  cmds.append(f"sed -i 's|^SOURCE_DSN=.*|SOURCE_DSN=\"{source_dsn}\"|' /opt/cdc/.env")
+                  cmds.append("sed -i 's|^SOURCE_DSN=.*|SOURCE_DSN=\"" + source_dsn + "\"|' /opt/cdc/.env")
               if target_dsn:
-                  cmds.append(f"sed -i 's|^TARGET_DSN=.*|TARGET_DSN=\"host={target_dsn} port=5432 dbname=postgres user=admin sslmode=require\"|' /opt/cdc/.env")
+                  cmds.append("sed -i 's|^TARGET_DSN=.*|TARGET_DSN=\"host=" + target_dsn + " port=5432 dbname=postgres user=admin sslmode=require\"|' /opt/cdc/.env")
                   cmds.append(f"sed -i 's|^DSQL_HOSTNAME=.*|DSQL_HOSTNAME={target_dsn}|' /opt/cdc/.env")
               cmds.append('systemctl restart cdc-service')
               cmd = ' && '.join(cmds)
@@ -666,12 +666,15 @@ Resources:
               ssm = boto3.client('ssm')
               instance_id = os.environ['CDC_INSTANCE_ID']
               cmds = []
-              if body.get('batch_size'):
-                  cmds.append(f"sed -i 's|^BATCH_SIZE=.*|BATCH_SIZE={int(body[\"batch_size\"])}|' /opt/cdc/.env")
-              if body.get('conflict_mode'):
-                  cmds.append(f"sed -i 's|^CONFLICT_MODE=.*|CONFLICT_MODE={body[\"conflict_mode\"]}|' /opt/cdc/.env")
-              if body.get('slot_name'):
-                  cmds.append(f"sed -i 's|^SLOT_NAME=.*|SLOT_NAME={body[\"slot_name\"]}|' /opt/cdc/.env")
+              batch_size = body.get('batch_size')
+              conflict_mode = body.get('conflict_mode')
+              slot_name = body.get('slot_name')
+              if batch_size:
+                  cmds.append("sed -i 's|^BATCH_SIZE=.*|BATCH_SIZE=" + str(int(batch_size)) + "|' /opt/cdc/.env")
+              if conflict_mode:
+                  cmds.append("sed -i 's|^CONFLICT_MODE=.*|CONFLICT_MODE=" + conflict_mode + "|' /opt/cdc/.env")
+              if slot_name:
+                  cmds.append("sed -i 's|^SLOT_NAME=.*|SLOT_NAME=" + slot_name + "|' /opt/cdc/.env")
               if cmds:
                   cmds.append('systemctl restart cdc-service')
                   cmd = ' && '.join(cmds)

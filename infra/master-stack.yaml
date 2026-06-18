@@ -221,16 +221,18 @@ Resources:
 
           # Start the service
           systemctl daemon-reload
+          # Service starts in stopped state — user starts via dashboard after configuring DSN
+          echo '{"state": "stopped"}' > /opt/cdc/control.json
+
           systemctl enable cdc-service
 
-          systemctl start cdc-service
 
 
           # Configure CloudWatch Logs agent (file-based collection)
           yum install -y amazon-cloudwatch-agent || true
           mkdir -p /var/log/cdc
           cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWEOF'
-          {"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/cdc/cdc-service.log","log_group_name":"/ec2/${AWS::StackName}-cdc","log_stream_name":"{instance_id}","retention_in_days":30}]}}}}
+          {"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/cdc/cdc-service.log","log_group_name":"/ec2/${AWS::StackName}-cdc","log_stream_name":"{instance_id}","retention_in_days":30},{"file_path":"/tmp/loadtest_output.log","log_group_name":"/ec2/${AWS::StackName}-cdc","log_stream_name":"loadtest","retention_in_days":30}]}}}}
           CWEOF
           sed -i 's/^[[:space:]]*//' /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
           /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json || true

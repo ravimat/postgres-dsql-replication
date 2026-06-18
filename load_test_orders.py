@@ -1145,27 +1145,34 @@ Examples:
     SAMPLE_SLOT = "sample_cdc_slot"
     SAMPLE_PUB = "sample_cdc_pub"
     print(f"\nCreating dedicated load test slot: {SAMPLE_SLOT}...")
-    with psycopg2.connect(config.source_dsn) as conn:
+    # Use separate connections for pub and slot (avoids "cannot create slot in transaction that has performed writes")
+    try:
+        conn = psycopg2.connect(config.source_dsn)
         conn.autocommit = True
-        with conn.cursor() as cur:
-            # Create publication for sample tables only
-            sample_tables = ['sample_customers', 'sample_products', 'sample_inventory',
-                             'sample_orders', 'sample_order_items', 'sample_payments', 'sample_shipments']
-            tables_list = ', '.join(f'public.{t}' for t in sample_tables)
-            try:
-                cur.execute(f"CREATE PUBLICATION {SAMPLE_PUB} FOR TABLE {tables_list}")
-            except Exception as e:
-                if 'already exists' in str(e):
-                    pass
-                else:
-                    print(f"  Note: {e}")
-            try:
-                cur.execute(f"SELECT pg_create_logical_replication_slot('{SAMPLE_SLOT}', 'test_decoding')")
-            except Exception as e:
-                if 'already exists' in str(e):
-                    pass
-                else:
-                    print(f"  Note: {e}")
+        cur = conn.cursor()
+        sample_tables = ['sample_customers', 'sample_products', 'sample_inventory',
+                         'sample_orders', 'sample_order_items', 'sample_payments', 'sample_shipments']
+        tables_list = ', '.join(f'public.{t}' for t in sample_tables)
+        try:
+            cur.execute(f"CREATE PUBLICATION {SAMPLE_PUB} FOR TABLE {tables_list}")
+        except Exception as e:
+            if 'already exists' not in str(e):
+                print(f"  Note (pub): {e}")
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"  Note (pub): {e}")
+    # Slot must be on a fresh connection with NO prior writes
+    try:
+        conn2 = psycopg2.connect(config.source_dsn)
+        conn2.autocommit = True
+        cur2 = conn2.cursor()
+        cur2.execute(f"SELECT pg_create_logical_replication_slot('{SAMPLE_SLOT}', 'test_decoding')")
+        cur2.close()
+        conn2.close()
+    except Exception as e:
+        if 'already exists' not in str(e):
+            print(f"  Note (slot): {e}")
     print(f"✓ Load test slot '{SAMPLE_SLOT}' ready")
 
     # Start isolated CDC consumer (reads from sample_cdc_slot → writes to DSQL)

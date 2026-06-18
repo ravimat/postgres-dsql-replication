@@ -27,7 +27,7 @@ Usage:
 
   # High-throughput burst
   python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" \
-      --duration 600 --sample_orders-per-sec 100 --threads 8
+      --duration 600 --orders-per-sec 100 --threads 8
 
   # Just create the schema (no load)
   python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" --setup-only
@@ -36,6 +36,8 @@ Usage:
 import argparse
 import json
 import os
+import re
+import boto3
 import sys
 import time
 import random
@@ -284,11 +286,11 @@ class OrderTestConfig:
             source_dsn=args.source_dsn or os.environ.get("SOURCE_DSN", ""),
             target_dsn=args.target_dsn or os.environ.get("TARGET_DSN", ""),
             duration_seconds=args.duration,
-            sample_orders_per_sec=args.sample_orders_per_sec,
+            sample_orders_per_sec=args.orders_per_sec,
             threads=args.threads,
             report_dir=args.report_dir,
-            seed_sample_customers=args.seed_sample_customers,
-            seed_sample_products=args.seed_sample_products,
+            seed_sample_customers=args.seed_customers,
+            seed_sample_products=args.seed_products,
         )
 
 
@@ -921,7 +923,182 @@ class OrderSystemLoadTest:
 
 # ---------------------------------------------------------------------------
 # Main
+
+
 # ---------------------------------------------------------------------------
+# Isolated CDC Consumer for Load Test
+# ---------------------------------------------------------------------------
+
+class SampleCDCConsumer:
+    """
+    Mini CDC consumer that reads from sample_cdc_slot (polling-based)
+    and replicates sample_* table changes to Aurora DSQL.
+    Runs as a background daemon thread — fully isolated from production CDC.
+    """
+
+    TABLE_PATTERN = re.compile(
+        r"^table\s+(?P<schema>\w+)\.(?P<table>\w+):\s+(?P<op>INSERT|UPDATE|DELETE):\s+(?P<data>.*)$"
+    )
+    COLUMN_PATTERN = re.compile(
+        r"(?P<name>\w+)\[(?P<type>[^\]]+)\]:(?P<value>(?:'(?:[^'\\]|\\.)*'|[^\s]+))"
+    )
+
+    def __init__(self, source_dsn, target_dsn, slot_name='sample_cdc_slot'):
+        self._source_dsn = source_dsn
+        self._target_dsn = target_dsn
+        self._slot_name = slot_name
+        self._running = False
+        self._thread = None
+        self._events_applied = 0
+        self._events_failed = 0
+        self._table_stats = {}  # per-table: {name: {applied: N, failed: N, ops: {}, last_event: ts}}
+        self._token_time = 0
+        self._dsql_token = None
+        # Extract DSQL hostname from target_dsn
+        m = re.search(r'host=([^\s]+)', target_dsn or '')
+        self._dsql_host = m.group(1) if m else ''
+        self._dsql_region = os.environ.get('DSQL_REGION', 'us-east-1')
+
+    def start(self):
+        if not self._target_dsn:
+            print("  SampleCDCConsumer: No target DSN — running source-only (no replication)")
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._poll_loop, name='sample-cdc-consumer', daemon=True)
+        self._thread.start()
+        print(f"  SampleCDCConsumer: Started (polling {self._slot_name} → DSQL)")
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=10)
+        self._write_stats_file()
+        return {'events_applied': self._events_applied, 'events_failed': self._events_failed}
+
+    def _write_stats_file(self):
+        """Write per-table stats to file for frontend to read."""
+        try:
+            stats = [{'name': k, **v} for k, v in self._table_stats.items()]
+            with open('/tmp/loadtest_tables.json', 'w') as f:
+                json.dump(stats, f)
+        except Exception:
+            pass
+
+    def _get_dsql_password(self):
+        """Generate/refresh DSQL IAM auth token."""
+        now = time.time()
+        if not self._dsql_token or (now - self._token_time) > 600:
+            try:
+                dsql = boto3.client('dsql', region_name=self._dsql_region)
+                self._dsql_token = dsql.generate_db_connect_admin_auth_token(
+                    Hostname=self._dsql_host, Region=self._dsql_region, ExpiresIn=900
+                )
+                self._token_time = now
+            except Exception as e:
+                print(f"  SampleCDCConsumer: Token refresh failed: {e}")
+        return self._dsql_token
+
+    def _poll_loop(self):
+        """Poll the replication slot every 1 second and apply changes to DSQL."""
+        while self._running:
+            try:
+                with psycopg2.connect(self._source_dsn) as conn:
+                    conn.autocommit = True
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"SELECT lsn, data FROM pg_logical_slot_get_changes('{self._slot_name}', NULL, NULL, "
+                            f"'include-xids', 'true', 'include-timestamp', 'true')"
+                        )
+                        rows = cur.fetchall()
+                if rows:
+                    events = self._parse_changes(rows)
+                    if events:
+                        self._apply_to_dsql(events)
+            except Exception as e:
+                if self._running:
+                    print(f"  SampleCDCConsumer poll error: {e}")
+            time.sleep(1)
+
+    def _parse_changes(self, rows):
+        """Parse test_decoding output rows into event dicts."""
+        events = []
+        for lsn, data in rows:
+            if not data:
+                continue
+            for line in data.strip().split('\n'):
+                line = line.strip()
+                if line.startswith('BEGIN') or line.startswith('COMMIT'):
+                    continue
+                match = self.TABLE_PATTERN.match(line)
+                if not match:
+                    continue
+                schema = match.group('schema')
+                table = match.group('table')
+                if not table.startswith('sample_'):
+                    continue
+                op = match.group('op')
+                col_data = match.group('data')
+                columns = {}
+                for cm in self.COLUMN_PATTERN.finditer(col_data):
+                    val = cm.group('value')
+                    if val == "null":
+                        val = None
+                    elif val.startswith("'") and val.endswith("'"):
+                        val = val[1:-1].replace("\\'", "'")
+                    columns[cm.group('name')] = val
+                events.append({'schema': schema, 'table': table, 'op': op, 'columns': columns})
+        return events
+
+    def _apply_to_dsql(self, events):
+        """Apply parsed events to DSQL using upsert pattern."""
+        token = self._get_dsql_password()
+        if not token:
+            self._events_failed += len(events)
+            return
+        try:
+            conn = psycopg2.connect(
+                host=self._dsql_host, port=5432, dbname='postgres',
+                user='admin', password=token, sslmode='require'
+            )
+            conn.autocommit = True
+            cur = conn.cursor()
+            for event in events:
+                try:
+                    fqtn = f'"{event["schema"]}"."{event["table"]}"'
+                    cols = event['columns']
+                    if event['op'] in ('INSERT', 'UPDATE'):
+                        col_names = ', '.join(cols.keys())
+                        placeholders = ', '.join(['%s'] * len(cols))
+                        values = list(cols.values())
+                        # Upsert: try INSERT, on conflict update all columns
+                        sql = f"INSERT INTO {fqtn} ({col_names}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+                        cur.execute(sql, values)
+                    elif event['op'] == 'DELETE':
+                        # Use first column as PK (id)
+                        if 'id' in cols:
+                            cur.execute(f"DELETE FROM {fqtn} WHERE id = %s", [cols['id']])
+                    self._events_applied += 1
+                    # Track per-table stats
+                    tname = f"{event['schema']}.{event['table']}"
+                    if tname not in self._table_stats:
+                        self._table_stats[tname] = {'eventsApplied': 0, 'errors': 0, 'operations': {}, 'lastEvent': None}
+                    self._table_stats[tname]['eventsApplied'] += 1
+                    self._table_stats[tname]['operations'][event['op']] = self._table_stats[tname]['operations'].get(event['op'], 0) + 1
+                    self._table_stats[tname]['lastEvent'] = time.time()
+                    self._write_stats_file()
+                except Exception as e:
+                    self._events_failed += 1
+                    tname = f"{event.get('schema','?')}.{event.get('table','?')}"
+                    if tname not in self._table_stats:
+                        self._table_stats[tname] = {'eventsApplied': 0, 'errors': 0, 'operations': {}, 'lastEvent': None}
+                    self._table_stats[tname]['errors'] += 1
+            cur.close()
+            conn.close()
+        except Exception as e:
+            self._events_failed += len(events)
+            if self._running:
+                print(f"  SampleCDCConsumer DSQL write error: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -934,7 +1111,7 @@ Examples:
 
   # High-throughput
   python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" \\
-      --sample_orders-per-sec 100 --threads 8 --duration 600
+      --orders-per-sec 100 --threads 8 --duration 600
 
   # Setup schema only
   python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" --setup-only
@@ -943,10 +1120,10 @@ Examples:
     parser.add_argument("--source-dsn", default="", help="PostgreSQL source DSN")
     parser.add_argument("--target-dsn", default="", help="Aurora DSQL target DSN")
     parser.add_argument("--duration", type=int, default=300, help="Test duration seconds (default: 300)")
-    parser.add_argument("--sample_orders-per-sec", type=int, default=20, help="Orders/second target (default: 20)")
+    parser.add_argument("--orders-per-sec", type=int, default=20, help="Orders/second target (default: 20)")
     parser.add_argument("--threads", type=int, default=4, help="Parallel threads (default: 4)")
-    parser.add_argument("--seed-sample_customers", type=int, default=500, help="Number of sample_customers to seed")
-    parser.add_argument("--seed-sample_products", type=int, default=200, help="Number of sample_products to seed")
+    parser.add_argument("--seed-customers", type=int, default=500, help="Number of sample_customers to seed")
+    parser.add_argument("--seed-products", type=int, default=200, help="Number of sample_products to seed")
     parser.add_argument("--report-dir", default="results", help="Output directory")
     parser.add_argument("--setup-only", action="store_true", help="Only create schema and seed data")
 
@@ -991,8 +1168,13 @@ Examples:
                     print(f"  Note: {e}")
     print(f"✓ Load test slot '{SAMPLE_SLOT}' ready")
 
+    # Start isolated CDC consumer (reads from sample_cdc_slot → writes to DSQL)
+    consumer = SampleCDCConsumer(config.source_dsn, config.target_dsn, SAMPLE_SLOT)
+    consumer.start()
+
     if args.setup_only:
         print("\n✓ Setup complete (--setup-only). Exiting.")
+        consumer.stop()
         sys.exit(0)
 
     # Run
@@ -1002,6 +1184,12 @@ Examples:
         print("\n⚠️  Interrupted")
         test._running = False
         metrics.end_time = time.time()
+
+    # Stop the isolated CDC consumer and get stats
+    print("\nWaiting for CDC consumer to flush remaining events...")
+    time.sleep(5)
+    cdc_stats = consumer.stop()
+    print(f"✓ CDC Consumer: {cdc_stats['events_applied']} events replicated, {cdc_stats['events_failed']} failed")
 
     # Cleanup: Drop the load test slot (no WAL accumulation after test)
     print(f"\nCleaning up load test slot: {SAMPLE_SLOT}...")

@@ -363,6 +363,8 @@ Resources:
                   - ssm:SendCommand
                   - ssm:GetCommandInvocation
                   - s3:GetObject
+                  - dsql:DbConnectAdmin
+                  - logs:*
                 Resource: '*'
 
   MetricsLambda:
@@ -417,6 +419,9 @@ Resources:
               elif '/loadtest/status' in path and method == 'GET':
                   qp = event.get('queryStringParameters', {}) or {}
                   return get_loadtest_status(qp)
+              elif '/loadtest/tables' in path and method == 'GET':
+                  # Proxy to EC2 health server
+                  return get_health_path('/loadtest/tables')
               elif '/loadtest' in path and method == 'POST':
                   return post_loadtest(body)
               elif '/test-connection' in path and method == 'POST':
@@ -463,6 +468,17 @@ Resources:
                   return response(200, health_data)
               except Exception as e:
                   return response(200, {'healthy': False, 'error': str(e), 'instance_id': os.environ.get('CDC_INSTANCE_ID', '')})
+
+          def get_health_path(path):
+              import urllib.request
+              try:
+                  private_ip = os.environ.get('CDC_PRIVATE_IP', '')
+                  port = os.environ.get('CDC_HEALTH_PORT', '8080')
+                  url = f'http://{private_ip}:{port}{path}'
+                  req = urllib.request.urlopen(url, timeout=5)
+                  return response(200, json.loads(req.read().decode()))
+              except Exception as e:
+                  return response(200, {'tables': [], 'error': str(e)})
 
           def metric_query(id, name, stat):
               return {
@@ -581,10 +597,20 @@ Resources:
                   except Exception as e:
                       results['source_ok'] = False
                       results['source_error'] = str(e)[:200]
-              # Test target
+              # Test target (base64-encode script, run on EC2 which has boto3 + IAM role)
               if target_dsn:
-                  cmd = f'python3.11 -c "import psycopg2, boto3; c=boto3.client(\'dsql\',region_name=\'${AWS::Region}\'); t=c.generate_db_connect_admin_auth_token(Hostname=\'{target_dsn}\',Region=\'${AWS::Region}\',ExpiresIn=900); conn=psycopg2.connect(host=\'{target_dsn}\',port=5432,dbname=\'postgres\',user=\'admin\',password=t,sslmode=\'require\'); cur=conn.cursor(); cur.execute(\'SELECT 1\'); print(\'DSQL connected\'); conn.close()"'
                   try:
+                      region = os.environ.get('AWS_REGION', 'us-east-1')
+                      script = "import psycopg2,boto3\n"
+                      script += "c=boto3.client('dsql',region_name='" + region + "')\n"
+                      script += "token=c.generate_db_connect_admin_auth_token(Hostname='" + target_dsn + "',Region='" + region + "',ExpiresIn=3600)\n"
+                      script += "conn=psycopg2.connect(host='" + target_dsn + "',port=5432,dbname='postgres',user='admin',password=[REDACTED_PASSWORD]
+                      script += "conn.cursor().execute('SELECT 1')\n"
+                      script += "print('DSQL connected')\n"
+                      script += "conn.close()\n"
+                      import base64
+                      b64_script = base64.b64encode(script.encode()).decode()
+                      cmd = f'echo {b64_script} | base64 -d > /tmp/test_dsql.py && python3.11 /tmp/test_dsql.py && rm -f /tmp/test_dsql.py'
                       r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]}, TimeoutSeconds=30)
                       t.sleep(5)
                       inv = ssm.get_command_invocation(CommandId=r['Command']['CommandId'], InstanceId=instance_id)

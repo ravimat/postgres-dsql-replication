@@ -217,18 +217,36 @@ const CDC = (() => {
 
         // Update sample table status on Load Test page
         const sampleTbody = document.getElementById('sampleTableStatusBody');
-        if (sampleTbody && sampleTables.length) {
-            sampleTbody.innerHTML = sampleTables.map(t => renderTableRow(t)).join('');
-            // Store last load values in localStorage
-            localStorage.setItem('cdc_last_loadtest', JSON.stringify(sampleTables));
-        } else if (sampleTbody && !sampleTables.length) {
-            // Restore last stored values
+        if (sampleTbody) {
+            fetchLoadTestTables();
+        }
+    }
+
+    async function fetchLoadTestTables() {
+        const sampleTbody = document.getElementById('sampleTableStatusBody');
+        if (!sampleTbody) return;
+        try {
+            const resp = await fetch(`${CONFIG.apiBaseUrl}/loadtest/tables`);
+            if (resp.status === 200 || resp.status === 503) {
+                const data = await resp.json();
+                if (data.tables && data.tables.length) {
+                    sampleTbody.innerHTML = data.tables.map(t => renderTableRow(t)).join('');
+                    localStorage.setItem('cdc_last_loadtest', JSON.stringify(data.tables));
+                } else {
+                    const stored = localStorage.getItem('cdc_last_loadtest');
+                    if (stored) {
+                        try {
+                            sampleTbody.innerHTML = JSON.parse(stored).map(t => renderTableRow(t)).join('');
+                        } catch(e) {}
+                    }
+                }
+            }
+        } catch(e) {
             const stored = localStorage.getItem('cdc_last_loadtest');
             if (stored) {
                 try {
-                    const lastTables = JSON.parse(stored);
-                    sampleTbody.innerHTML = lastTables.map(t => renderTableRow(t)).join('');
-                } catch(e) {}
+                    sampleTbody.innerHTML = JSON.parse(stored).map(t => renderTableRow(t)).join('');
+                } catch(e2) {}
             }
         }
     }

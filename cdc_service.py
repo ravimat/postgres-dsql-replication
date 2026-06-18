@@ -551,6 +551,21 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(rules_data, indent=2).encode())
 
+        elif self.path == "/loadtest/tables":
+            # Return load test sample table stats from file
+            stats = []
+            try:
+                if os.path.exists('/tmp/loadtest_tables.json'):
+                    with open('/tmp/loadtest_tables.json') as f:
+                        stats = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({"tables": stats}).encode())
+
         elif self.path == "/ready":
             ready = self.service._is_streaming if self.service else False
             self.send_response(200 if ready else 503)

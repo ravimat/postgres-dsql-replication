@@ -6,31 +6,31 @@ multiple related tables and realistic DML patterns to stress-test the
 CDC replication from PostgreSQL → Aurora DSQL.
 
 Tables:
-  - customers        (CRUD, mostly INSERT on signup, occasional UPDATE)
-  - products         (CRUD, infrequent changes)
-  - orders           (INSERT-heavy, status UPDATEs through lifecycle)
-  - order_items      (INSERT with order, rarely updated)
-  - payments         (INSERT when order placed, UPDATE on status change)
-  - shipments        (INSERT when shipped, UPDATE for tracking)
-  - inventory        (UPDATE-heavy, decrement on order, increment on restock)
+  - sample_customers        (CRUD, mostly INSERT on signup, occasional UPDATE)
+  - sample_products         (CRUD, infrequent changes)
+  - sample_orders           (INSERT-heavy, status UPDATEs through lifecycle)
+  - sample_order_items      (INSERT with order, rarely updated)
+  - sample_payments         (INSERT when order placed, UPDATE on status change)
+  - sample_shipments        (INSERT when shipped, UPDATE for tracking)
+  - sample_inventory        (UPDATE-heavy, decrement on order, increment on restock)
 
 Realistic patterns:
   - Order lifecycle: pending → confirmed → shipped → delivered
   - Payment lifecycle: pending → authorized → captured → settled
   - Inventory decrements on order, restocks periodically
-  - Cascading writes: 1 order = INSERT orders + N INSERT order_items +
-    INSERT payment + UPDATE inventory (per item)
+  - Cascading writes: 1 order = INSERT sample_orders + N INSERT sample_order_items +
+    INSERT payment + UPDATE sample_inventory (per item)
 
 Usage:
-  # Run with defaults (5 min, 20 orders/sec)
-  python load_test_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN"
+  # Run with defaults (5 min, 20 sample_orders/sec)
+  python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN"
 
   # High-throughput burst
-  python load_test_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" \
-      --duration 600 --orders-per-sec 100 --threads 8
+  python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" \
+      --duration 600 --sample_orders-per-sec 100 --threads 8
 
   # Just create the schema (no load)
-  python load_test_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" --setup-only
+  python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" --setup-only
 """
 
 import argparse
@@ -58,7 +58,7 @@ import psycopg2.extras
 
 SOURCE_SCHEMA = """
 -- Customers
-CREATE TABLE IF NOT EXISTS public.customers (
+CREATE TABLE IF NOT EXISTS public.sample_customers (
     customer_id BIGSERIAL PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
     first_name TEXT NOT NULL,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS public.customers (
 );
 
 -- Products
-CREATE TABLE IF NOT EXISTS public.products (
+CREATE TABLE IF NOT EXISTS public.sample_products (
     product_id BIGSERIAL PRIMARY KEY,
     sku TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
@@ -89,8 +89,8 @@ CREATE TABLE IF NOT EXISTS public.products (
 );
 
 -- Inventory
-CREATE TABLE IF NOT EXISTS public.inventory (
-    product_id BIGINT PRIMARY KEY REFERENCES public.products(product_id),
+CREATE TABLE IF NOT EXISTS public.sample_inventory (
+    product_id BIGINT PRIMARY KEY REFERENCES public.sample_products(product_id),
     quantity_available INT NOT NULL DEFAULT 0,
     quantity_reserved INT NOT NULL DEFAULT 0,
     warehouse_code TEXT DEFAULT 'WH-01',
@@ -99,9 +99,9 @@ CREATE TABLE IF NOT EXISTS public.inventory (
 );
 
 -- Orders
-CREATE TABLE IF NOT EXISTS public.orders (
+CREATE TABLE IF NOT EXISTS public.sample_orders (
     order_id BIGSERIAL PRIMARY KEY,
-    customer_id BIGINT NOT NULL REFERENCES public.customers(customer_id),
+    customer_id BIGINT NOT NULL REFERENCES public.sample_customers(customer_id),
     order_status TEXT NOT NULL DEFAULT 'pending',
     subtotal NUMERIC(12, 2) NOT NULL,
     tax NUMERIC(10, 2) NOT NULL DEFAULT 0,
@@ -117,10 +117,10 @@ CREATE TABLE IF NOT EXISTS public.orders (
 );
 
 -- Order Items
-CREATE TABLE IF NOT EXISTS public.order_items (
+CREATE TABLE IF NOT EXISTS public.sample_order_items (
     order_item_id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT NOT NULL REFERENCES public.orders(order_id),
-    product_id BIGINT NOT NULL REFERENCES public.products(product_id),
+    order_id BIGINT NOT NULL REFERENCES public.sample_orders(order_id),
+    product_id BIGINT NOT NULL REFERENCES public.sample_products(product_id),
     quantity INT NOT NULL,
     unit_price NUMERIC(10, 2) NOT NULL,
     line_total NUMERIC(12, 2) NOT NULL,
@@ -128,9 +128,9 @@ CREATE TABLE IF NOT EXISTS public.order_items (
 );
 
 -- Payments
-CREATE TABLE IF NOT EXISTS public.payments (
+CREATE TABLE IF NOT EXISTS public.sample_payments (
     payment_id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT NOT NULL REFERENCES public.orders(order_id),
+    order_id BIGINT NOT NULL REFERENCES public.sample_orders(order_id),
     payment_method TEXT NOT NULL,
     payment_status TEXT NOT NULL DEFAULT 'pending',
     amount NUMERIC(12, 2) NOT NULL,
@@ -143,9 +143,9 @@ CREATE TABLE IF NOT EXISTS public.payments (
 );
 
 -- Shipments
-CREATE TABLE IF NOT EXISTS public.shipments (
+CREATE TABLE IF NOT EXISTS public.sample_shipments (
     shipment_id BIGSERIAL PRIMARY KEY,
-    order_id BIGINT NOT NULL REFERENCES public.orders(order_id),
+    order_id BIGINT NOT NULL REFERENCES public.sample_orders(order_id),
     carrier TEXT NOT NULL,
     tracking_number TEXT,
     shipment_status TEXT NOT NULL DEFAULT 'preparing',
@@ -157,17 +157,17 @@ CREATE TABLE IF NOT EXISTS public.shipments (
 );
 
 -- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_orders_customer ON public.orders(customer_id);
-CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(order_status);
-CREATE INDEX IF NOT EXISTS idx_order_items_order ON public.order_items(order_id);
-CREATE INDEX IF NOT EXISTS idx_payments_order ON public.payments(order_id);
-CREATE INDEX IF NOT EXISTS idx_shipments_order ON public.shipments(order_id);
-CREATE INDEX IF NOT EXISTS idx_inventory_product ON public.inventory(product_id);
+CREATE INDEX IF NOT EXISTS idx_sample_orders_customer ON public.sample_orders(customer_id);
+CREATE INDEX IF NOT EXISTS idx_sample_orders_status ON public.sample_orders(order_status);
+CREATE INDEX IF NOT EXISTS idx_sample_order_items_order ON public.sample_order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_sample_payments_order ON public.sample_payments(order_id);
+CREATE INDEX IF NOT EXISTS idx_sample_shipments_order ON public.sample_shipments(order_id);
+CREATE INDEX IF NOT EXISTS idx_sample_inventory_product ON public.sample_inventory(product_id);
 """
 
 # DSQL-compatible schema (no SERIAL, no FK REFERENCES, no DEFAULT NOW())
 DSQL_SCHEMA = """
-CREATE TABLE IF NOT EXISTS public.customers (
+CREATE TABLE IF NOT EXISTS public.sample_customers (
     customer_id BIGINT PRIMARY KEY,
     email TEXT NOT NULL,
     first_name TEXT NOT NULL,
@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS public.customers (
     updated_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS public.products (
+CREATE TABLE IF NOT EXISTS public.sample_products (
     product_id BIGINT PRIMARY KEY,
     sku TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS public.products (
     updated_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS public.inventory (
+CREATE TABLE IF NOT EXISTS public.sample_inventory (
     product_id BIGINT PRIMARY KEY,
     quantity_available INT NOT NULL,
     quantity_reserved INT NOT NULL,
@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS public.inventory (
     updated_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS public.orders (
+CREATE TABLE IF NOT EXISTS public.sample_orders (
     order_id BIGINT PRIMARY KEY,
     customer_id BIGINT NOT NULL,
     order_status TEXT NOT NULL,
@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS public.orders (
     updated_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS public.order_items (
+CREATE TABLE IF NOT EXISTS public.sample_order_items (
     order_item_id BIGINT PRIMARY KEY,
     order_id BIGINT NOT NULL,
     product_id BIGINT NOT NULL,
@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS public.order_items (
     created_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS public.payments (
+CREATE TABLE IF NOT EXISTS public.sample_payments (
     payment_id BIGINT PRIMARY KEY,
     order_id BIGINT NOT NULL,
     payment_method TEXT NOT NULL,
@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS public.payments (
     updated_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS public.shipments (
+CREATE TABLE IF NOT EXISTS public.sample_shipments (
     shipment_id BIGINT PRIMARY KEY,
     order_id BIGINT NOT NULL,
     carrier TEXT NOT NULL,
@@ -270,11 +270,11 @@ class OrderTestConfig:
     source_dsn: str
     target_dsn: str
     duration_seconds: int = 300
-    orders_per_sec: int = 20          # Target orders/second
+    sample_orders_per_sec: int = 20          # Target sample_orders/second
     threads: int = 4
     report_dir: str = "results"
-    seed_customers: int = 500
-    seed_products: int = 200
+    seed_sample_customers: int = 500
+    seed_sample_products: int = 200
     warmup_seconds: int = 15          # Wait for CDC catch-up before validating
     seed: int = 42
 
@@ -284,11 +284,11 @@ class OrderTestConfig:
             source_dsn=args.source_dsn or os.environ.get("SOURCE_DSN", ""),
             target_dsn=args.target_dsn or os.environ.get("TARGET_DSN", ""),
             duration_seconds=args.duration,
-            orders_per_sec=args.orders_per_sec,
+            sample_orders_per_sec=args.sample_orders_per_sec,
             threads=args.threads,
             report_dir=args.report_dir,
-            seed_customers=args.seed_customers,
-            seed_products=args.seed_products,
+            seed_sample_customers=args.seed_sample_customers,
+            seed_sample_products=args.seed_sample_products,
         )
 
 
@@ -301,13 +301,13 @@ class TestMetrics:
     """Tracks all test metrics."""
     start_time: float = 0
     end_time: float = 0
-    orders_placed: int = 0
-    orders_confirmed: int = 0
-    orders_shipped: int = 0
-    orders_delivered: int = 0
-    payments_created: int = 0
-    shipments_created: int = 0
-    inventory_updates: int = 0
+    sample_orders_placed: int = 0
+    sample_orders_confirmed: int = 0
+    sample_orders_shipped: int = 0
+    sample_orders_delivered: int = 0
+    sample_payments_created: int = 0
+    sample_shipments_created: int = 0
+    sample_inventory_updates: int = 0
     total_dml_operations: int = 0
     errors: int = 0
     error_samples: List = field(default_factory=list)
@@ -327,13 +327,13 @@ class TestMetrics:
         latencies = sorted(self.latencies_ms) if self.latencies_ms else [0]
         return {
             "duration_seconds": round(duration, 1),
-            "orders_placed": self.orders_placed,
-            "orders_confirmed": self.orders_confirmed,
-            "orders_shipped": self.orders_shipped,
-            "orders_delivered": self.orders_delivered,
+            "sample_orders_placed": self.sample_orders_placed,
+            "sample_orders_confirmed": self.sample_orders_confirmed,
+            "sample_orders_shipped": self.sample_orders_shipped,
+            "sample_orders_delivered": self.sample_orders_delivered,
             "total_dml_operations": self.total_dml_operations,
             "effective_tps": round(self.total_dml_operations / duration, 1),
-            "orders_per_sec": round(self.orders_placed / duration, 1),
+            "sample_orders_per_sec": round(self.sample_orders_placed / duration, 1),
             "errors": self.errors,
             "latency_avg_ms": round(statistics.mean(latencies), 2) if latencies else 0,
             "latency_p50_ms": round(latencies[len(latencies)//2], 2),
@@ -411,27 +411,27 @@ class OrderSystemLoadTest:
     Simulates realistic order lifecycle:
     
     1. Place Order:
-       - INSERT into orders
-       - INSERT into order_items (1-5 items)
-       - INSERT into payments
-       - UPDATE inventory (decrement per item)
+       - INSERT into sample_orders
+       - INSERT into sample_order_items (1-5 items)
+       - INSERT into sample_payments
+       - UPDATE sample_inventory (decrement per item)
     
     2. Confirm Order (after ~2s):
-       - UPDATE orders SET status = 'confirmed'
-       - UPDATE payments SET status = 'authorized'
+       - UPDATE sample_orders SET status = 'confirmed'
+       - UPDATE sample_payments SET status = 'authorized'
     
     3. Ship Order (after ~5s):
-       - UPDATE orders SET status = 'shipped'
-       - INSERT into shipments
-       - UPDATE payments SET status = 'captured'
+       - UPDATE sample_orders SET status = 'shipped'
+       - INSERT into sample_shipments
+       - UPDATE sample_payments SET status = 'captured'
     
     4. Deliver Order (after ~10s):
-       - UPDATE orders SET status = 'delivered'
-       - UPDATE shipments SET status = 'delivered'
-       - UPDATE payments SET status = 'settled'
+       - UPDATE sample_orders SET status = 'delivered'
+       - UPDATE sample_shipments SET status = 'delivered'
+       - UPDATE sample_payments SET status = 'settled'
     
     5. Periodic Inventory Restock:
-       - UPDATE inventory SET quantity_available += random
+       - UPDATE sample_inventory SET quantity_available += random
     """
 
     def __init__(self, config: OrderTestConfig, metrics: TestMetrics):
@@ -441,10 +441,10 @@ class OrderSystemLoadTest:
         self._running = False
         self._lock = threading.Lock()
 
-        # Track pending orders for lifecycle progression
-        self._pending_orders: List[Dict] = []     # awaiting confirmation
-        self._confirmed_orders: List[Dict] = []   # awaiting shipment
-        self._shipped_orders: List[Dict] = []     # awaiting delivery
+        # Track pending sample_orders for lifecycle progression
+        self._pending_sample_orders: List[Dict] = []     # awaiting confirmation
+        self._confirmed_sample_orders: List[Dict] = []   # awaiting shipment
+        self._shipped_sample_orders: List[Dict] = []     # awaiting delivery
 
         # Cached IDs
         self._customer_ids: List[int] = []
@@ -467,6 +467,26 @@ class OrderSystemLoadTest:
                         cur.execute(clean_stmt)
         print("✓ Source schema created")
 
+        # Set REPLICA IDENTITY and add to publication for CDC
+        print("Setting up REPLICA IDENTITY and publication for sample tables...")
+        sample_tables = ['sample_customers', 'sample_products', 'sample_inventory',
+                         'sample_orders', 'sample_order_items', 'sample_payments', 'sample_shipments']
+        with psycopg2.connect(self.config.source_dsn) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                for table in sample_tables:
+                    cur.execute(f"ALTER TABLE public.{table} REPLICA IDENTITY FULL")
+                try:
+                    pub_tables = ', '.join(f'public.{t}' for t in sample_tables)
+                    cur.execute(f"ALTER PUBLICATION dsql_cdc_pub ADD TABLE {pub_tables}")
+                except Exception as e:
+                    if 'already member' not in str(e):
+                        print(f"  Note: {e}")
+        print("✓ REPLICA IDENTITY + publication configured")
+
+        if not self.config.target_dsn:
+            print("⚠ No target DSN provided — skipping target schema creation (CDC service will replicate)")
+            return
         print("Creating schema on target (Aurora DSQL)...")
         try:
             # DSQL requires each DDL in its own transaction/connection
@@ -490,17 +510,17 @@ class OrderSystemLoadTest:
             print(f"⚠️  Target schema: {e}")
 
     def seed_data(self):
-        """Seed customers and products."""
-        print(f"Seeding {self.config.seed_customers} customers and "
-              f"{self.config.seed_products} products...")
+        """Seed sample_customers and sample_products."""
+        print(f"Seeding {self.config.seed_sample_customers} sample_customers and "
+              f"{self.config.seed_sample_products} sample_products...")
 
         with psycopg2.connect(self.config.source_dsn) as conn:
             with conn.cursor() as cur:
-                # Seed customers
-                for i in range(self.config.seed_customers):
+                # Seed sample_customers
+                for i in range(self.config.seed_sample_customers):
                     c = self.gen.customer(i)
                     cur.execute("""
-                        INSERT INTO public.customers 
+                        INSERT INTO public.sample_customers 
                             (email, first_name, last_name, phone, address_line1,
                              city, state, zip_code, country)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -512,11 +532,11 @@ class OrderSystemLoadTest:
                     if row:
                         self._customer_ids.append(row[0])
 
-                # Seed products + inventory
-                for i in range(self.config.seed_products):
+                # Seed sample_products + sample_inventory
+                for i in range(self.config.seed_sample_products):
                     p = self.gen.product(i)
                     cur.execute("""
-                        INSERT INTO public.products
+                        INSERT INTO public.sample_products
                             (sku, name, description, category, price, weight_kg, is_active)
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (sku) DO NOTHING
@@ -528,9 +548,9 @@ class OrderSystemLoadTest:
                         self._product_ids.append(row[0])
                         self._product_prices[row[0]] = float(row[1])
 
-                        # Create inventory record
+                        # Create sample_inventory record
                         cur.execute("""
-                            INSERT INTO public.inventory (product_id, quantity_available, quantity_reserved)
+                            INSERT INTO public.sample_inventory (product_id, quantity_available, quantity_reserved)
                             VALUES (%s, %s, 0)
                             ON CONFLICT (product_id) DO NOTHING
                         """, (row[0], self.gen._rng.randint(50, 500)))
@@ -541,29 +561,29 @@ class OrderSystemLoadTest:
         if not self._customer_ids:
             with psycopg2.connect(self.config.source_dsn) as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT customer_id FROM public.customers LIMIT %s",
-                                (self.config.seed_customers,))
+                    cur.execute("SELECT customer_id FROM public.sample_customers LIMIT %s",
+                                (self.config.seed_sample_customers,))
                     self._customer_ids = [r[0] for r in cur.fetchall()]
-                    cur.execute("SELECT product_id, price FROM public.products LIMIT %s",
-                                (self.config.seed_products,))
+                    cur.execute("SELECT product_id, price FROM public.sample_products LIMIT %s",
+                                (self.config.seed_sample_products,))
                     for r in cur.fetchall():
                         self._product_ids.append(r[0])
                         self._product_prices[r[0]] = float(r[1])
 
-        print(f"✓ Seeded {len(self._customer_ids)} customers, "
-              f"{len(self._product_ids)} products with inventory")
+        print(f"✓ Seeded {len(self._customer_ids)} sample_customers, "
+              f"{len(self._product_ids)} sample_products with sample_inventory")
 
     def run(self):
         """Run the order system load test."""
         self._running = True
         self.metrics.start_time = time.time()
         end_time = self.metrics.start_time + self.config.duration_seconds
-        interval = 1.0 / self.config.orders_per_sec if self.config.orders_per_sec > 0 else 0
+        interval = 1.0 / self.config.sample_orders_per_sec if self.config.sample_orders_per_sec > 0 else 0
 
         print(f"\n{'═' * 60}")
         print(f"Order System Load Test Started")
         print(f"  Duration:      {self.config.duration_seconds}s")
-        print(f"  Orders/sec:    {self.config.orders_per_sec}")
+        print(f"  Orders/sec:    {self.config.sample_orders_per_sec}")
         print(f"  Threads:       {self.config.threads}")
         print(f"  Customers:     {len(self._customer_ids)}")
         print(f"  Products:      {len(self._product_ids)}")
@@ -590,10 +610,10 @@ class OrderSystemLoadTest:
                 # Progress report every 10 seconds
                 if time.time() - last_report > 10:
                     elapsed = time.time() - self.metrics.start_time
-                    print(f"  [{elapsed:.0f}s] Orders placed: {self.metrics.orders_placed}, "
-                          f"Confirmed: {self.metrics.orders_confirmed}, "
-                          f"Shipped: {self.metrics.orders_shipped}, "
-                          f"Delivered: {self.metrics.orders_delivered}, "
+                    print(f"  [{elapsed:.0f}s] Orders placed: {self.metrics.sample_orders_placed}, "
+                          f"Confirmed: {self.metrics.sample_orders_confirmed}, "
+                          f"Shipped: {self.metrics.sample_orders_shipped}, "
+                          f"Delivered: {self.metrics.sample_orders_delivered}, "
                           f"DML ops: {self.metrics.total_dml_operations}, "
                           f"Errors: {self.metrics.errors}")
                     last_report = time.time()
@@ -603,7 +623,7 @@ class OrderSystemLoadTest:
 
         print(f"\n✓ Load test complete!")
         summary = self.metrics.summary()
-        print(f"  Orders placed:    {summary['orders_placed']}")
+        print(f"  Orders placed:    {summary['sample_orders_placed']}")
         print(f"  Total DML ops:    {summary['total_dml_operations']}")
         print(f"  Effective TPS:    {summary['effective_tps']}")
         print(f"  Errors:           {summary['errors']}")
@@ -617,7 +637,7 @@ class OrderSystemLoadTest:
                     # Pick random customer
                     customer_id = self.gen._rng.choice(self._customer_ids)
 
-                    # Pick 1-5 random products
+                    # Pick 1-5 random sample_products
                     num_items = self.gen._rng.randint(1, 5)
                     items = self.gen._rng.sample(
                         self._product_ids, min(num_items, len(self._product_ids))
@@ -625,13 +645,13 @@ class OrderSystemLoadTest:
 
                     # Calculate totals
                     subtotal = 0
-                    order_items = []
+                    sample_order_items = []
                     for product_id in items:
                         qty = self.gen._rng.randint(1, 3)
                         price = self._product_prices.get(product_id, 19.99)
                         line_total = round(price * qty, 2)
                         subtotal += line_total
-                        order_items.append((product_id, qty, price, line_total))
+                        sample_order_items.append((product_id, qty, price, line_total))
 
                     tax = round(subtotal * 0.08, 2)
                     shipping = round(self.gen._rng.uniform(0, 12.99), 2)
@@ -639,7 +659,7 @@ class OrderSystemLoadTest:
 
                     # 1. INSERT order
                     cur.execute("""
-                        INSERT INTO public.orders
+                        INSERT INTO public.sample_orders
                             (customer_id, order_status, subtotal, tax, shipping_cost, 
                              total, shipping_address, order_date)
                         VALUES (%s, 'pending', %s, %s, %s, %s, %s, NOW())
@@ -649,25 +669,25 @@ class OrderSystemLoadTest:
                     order_id = cur.fetchone()[0]
 
                     # 2. INSERT order items
-                    for product_id, qty, price, line_total in order_items:
+                    for product_id, qty, price, line_total in sample_order_items:
                         cur.execute("""
-                            INSERT INTO public.order_items
+                            INSERT INTO public.sample_order_items
                                 (order_id, product_id, quantity, unit_price, line_total)
                             VALUES (%s, %s, %s, %s, %s)
                         """, (order_id, product_id, qty, price, line_total))
 
                     # 3. INSERT payment
                     cur.execute("""
-                        INSERT INTO public.payments
+                        INSERT INTO public.sample_payments
                             (order_id, payment_method, payment_status, amount, currency, transaction_ref)
                         VALUES (%s, %s, 'pending', %s, 'USD', %s)
                     """, (order_id, self.gen._rng.choice(DataGenerator.PAYMENT_METHODS),
                           total, f"TXN-{uuid.uuid4().hex[:12].upper()}"))
 
-                    # 4. UPDATE inventory (decrement)
-                    for product_id, qty, _, _ in order_items:
+                    # 4. UPDATE sample_inventory (decrement)
+                    for product_id, qty, _, _ in sample_order_items:
                         cur.execute("""
-                            UPDATE public.inventory
+                            UPDATE public.sample_inventory
                             SET quantity_available = quantity_available - %s,
                                 quantity_reserved = quantity_reserved + %s,
                                 updated_at = NOW()
@@ -677,13 +697,13 @@ class OrderSystemLoadTest:
                 conn.commit()
 
             # Track metrics
-            dml_count = 1 + len(order_items) + 1 + len(order_items)  # order + items + payment + inventory updates
+            dml_count = 1 + len(sample_order_items) + 1 + len(sample_order_items)  # order + items + payment + sample_inventory updates
             with self._lock:
-                self.metrics.orders_placed += 1
-                self.metrics.payments_created += 1
-                self.metrics.inventory_updates += len(order_items)
+                self.metrics.sample_orders_placed += 1
+                self.metrics.sample_payments_created += 1
+                self.metrics.sample_inventory_updates += len(sample_order_items)
                 self.metrics.total_dml_operations += dml_count
-                self._pending_orders.append({
+                self._pending_sample_orders.append({
                     "order_id": order_id,
                     "placed_at": time.time(),
                 })
@@ -695,37 +715,37 @@ class OrderSystemLoadTest:
 
     def _lifecycle_processor(self):
         """
-        Background thread that progresses orders through their lifecycle:
+        Background thread that progresses sample_orders through their lifecycle:
         pending → confirmed (after ~2s) → shipped (after ~5s) → delivered (after ~10s)
         """
         while self._running:
             now = time.time()
 
-            # Confirm pending orders (after 2 seconds)
+            # Confirm pending sample_orders (after 2 seconds)
             with self._lock:
-                ready_to_confirm = [o for o in self._pending_orders if now - o["placed_at"] > 2]
+                ready_to_confirm = [o for o in self._pending_sample_orders if now - o["placed_at"] > 2]
                 for o in ready_to_confirm:
-                    self._pending_orders.remove(o)
-                    self._confirmed_orders.append({**o, "confirmed_at": now})
+                    self._pending_sample_orders.remove(o)
+                    self._confirmed_sample_orders.append({**o, "confirmed_at": now})
 
             for order in ready_to_confirm:
                 self._confirm_order(order["order_id"])
 
-            # Ship confirmed orders (after 5 seconds from confirmation)
+            # Ship confirmed sample_orders (after 5 seconds from confirmation)
             with self._lock:
-                ready_to_ship = [o for o in self._confirmed_orders if now - o["confirmed_at"] > 5]
+                ready_to_ship = [o for o in self._confirmed_sample_orders if now - o["confirmed_at"] > 5]
                 for o in ready_to_ship:
-                    self._confirmed_orders.remove(o)
-                    self._shipped_orders.append({**o, "shipped_at": now})
+                    self._confirmed_sample_orders.remove(o)
+                    self._shipped_sample_orders.append({**o, "shipped_at": now})
 
             for order in ready_to_ship:
                 self._ship_order(order["order_id"])
 
-            # Deliver shipped orders (after 10 seconds from shipping)
+            # Deliver shipped sample_orders (after 10 seconds from shipping)
             with self._lock:
-                ready_to_deliver = [o for o in self._shipped_orders if now - o["shipped_at"] > 10]
+                ready_to_deliver = [o for o in self._shipped_sample_orders if now - o["shipped_at"] > 10]
                 for o in ready_to_deliver:
-                    self._shipped_orders.remove(o)
+                    self._shipped_sample_orders.remove(o)
 
             for order in ready_to_deliver:
                 self._deliver_order(order["order_id"])
@@ -733,88 +753,88 @@ class OrderSystemLoadTest:
             time.sleep(0.5)
 
     def _confirm_order(self, order_id: int):
-        """Confirm an order: UPDATE orders + UPDATE payment."""
+        """Confirm an order: UPDATE sample_orders + UPDATE payment."""
         try:
             with psycopg2.connect(self.config.source_dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        UPDATE public.orders
+                        UPDATE public.sample_orders
                         SET order_status = 'confirmed', confirmed_at = NOW(), updated_at = NOW()
                         WHERE order_id = %s
                     """, (order_id,))
                     cur.execute("""
-                        UPDATE public.payments
+                        UPDATE public.sample_payments
                         SET payment_status = 'authorized', authorized_at = NOW(), updated_at = NOW()
                         WHERE order_id = %s
                     """, (order_id,))
                 conn.commit()
             with self._lock:
-                self.metrics.orders_confirmed += 1
+                self.metrics.sample_orders_confirmed += 1
                 self.metrics.total_dml_operations += 2
         except Exception as e:
             self.metrics.record_error(f"confirm: {e}")
 
     def _ship_order(self, order_id: int):
-        """Ship an order: UPDATE orders + INSERT shipment + UPDATE payment."""
+        """Ship an order: UPDATE sample_orders + INSERT shipment + UPDATE payment."""
         try:
             with psycopg2.connect(self.config.source_dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        UPDATE public.orders
+                        UPDATE public.sample_orders
                         SET order_status = 'shipped', shipped_at = NOW(), updated_at = NOW()
                         WHERE order_id = %s
                     """, (order_id,))
                     cur.execute("""
-                        INSERT INTO public.shipments
+                        INSERT INTO public.sample_shipments
                             (order_id, carrier, tracking_number, shipment_status, 
                              shipped_at, estimated_delivery)
                         VALUES (%s, %s, %s, 'in_transit', NOW(), NOW() + INTERVAL '3 days')
                     """, (order_id, self.gen._rng.choice(DataGenerator.CARRIERS),
                           self.gen.tracking_number()))
                     cur.execute("""
-                        UPDATE public.payments
+                        UPDATE public.sample_payments
                         SET payment_status = 'captured', captured_at = NOW(), updated_at = NOW()
                         WHERE order_id = %s
                     """, (order_id,))
                 conn.commit()
             with self._lock:
-                self.metrics.orders_shipped += 1
-                self.metrics.shipments_created += 1
+                self.metrics.sample_orders_shipped += 1
+                self.metrics.sample_shipments_created += 1
                 self.metrics.total_dml_operations += 3
         except Exception as e:
             self.metrics.record_error(f"ship: {e}")
 
     def _deliver_order(self, order_id: int):
-        """Deliver an order: UPDATE orders + UPDATE shipment + UPDATE payment + release inventory."""
+        """Deliver an order: UPDATE sample_orders + UPDATE shipment + UPDATE payment + release sample_inventory."""
         try:
             with psycopg2.connect(self.config.source_dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        UPDATE public.orders
+                        UPDATE public.sample_orders
                         SET order_status = 'delivered', delivered_at = NOW(), updated_at = NOW()
                         WHERE order_id = %s
                     """, (order_id,))
                     cur.execute("""
-                        UPDATE public.shipments
+                        UPDATE public.sample_shipments
                         SET shipment_status = 'delivered', delivered_at = NOW(), updated_at = NOW()
                         WHERE order_id = %s
                     """, (order_id,))
                     cur.execute("""
-                        UPDATE public.payments
+                        UPDATE public.sample_payments
                         SET payment_status = 'settled', updated_at = NOW()
                         WHERE order_id = %s
                     """, (order_id,))
-                    # Release reserved inventory
+                    # Release reserved sample_inventory
                     cur.execute("""
-                        UPDATE public.inventory i
+                        UPDATE public.sample_inventory i
                         SET quantity_reserved = GREATEST(0, quantity_reserved - oi.quantity),
                             updated_at = NOW()
-                        FROM public.order_items oi
+                        FROM public.sample_order_items oi
                         WHERE oi.order_id = %s AND i.product_id = oi.product_id
                     """, (order_id,))
                 conn.commit()
             with self._lock:
-                self.metrics.orders_delivered += 1
+                self.metrics.sample_orders_delivered += 1
                 self.metrics.total_dml_operations += 4
         except Exception as e:
             self.metrics.record_error(f"deliver: {e}")
@@ -825,8 +845,8 @@ class OrderSystemLoadTest:
         time.sleep(self.config.warmup_seconds)
 
         print("🔍 Validating data integrity across all tables...")
-        tables = ["customers", "products", "inventory", "orders",
-                  "order_items", "payments", "shipments"]
+        tables = ["sample_customers", "sample_products", "sample_inventory", "sample_orders",
+                  "sample_order_items", "sample_payments", "sample_shipments"]
         results = {}
 
         for table in tables:
@@ -864,10 +884,10 @@ class OrderSystemLoadTest:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "config": {
                 "duration": self.config.duration_seconds,
-                "orders_per_sec": self.config.orders_per_sec,
+                "sample_orders_per_sec": self.config.sample_orders_per_sec,
                 "threads": self.config.threads,
-                "seed_customers": self.config.seed_customers,
-                "seed_products": self.config.seed_products,
+                "seed_sample_customers": self.config.seed_sample_customers,
+                "seed_sample_products": self.config.seed_sample_products,
             },
             "metrics": self.metrics.summary(),
             "integrity": integrity,
@@ -885,10 +905,10 @@ class OrderSystemLoadTest:
         print(f"FINAL RESULTS — Order System CDC Load Test")
         print(f"{'═' * 60}")
         print(f"  Duration:          {summary['duration_seconds']}s")
-        print(f"  Orders placed:     {summary['orders_placed']:,}")
-        print(f"  Orders confirmed:  {self.metrics.orders_confirmed:,}")
-        print(f"  Orders shipped:    {self.metrics.orders_shipped:,}")
-        print(f"  Orders delivered:  {self.metrics.orders_delivered:,}")
+        print(f"  Orders placed:     {summary['sample_orders_placed']:,}")
+        print(f"  Orders confirmed:  {self.metrics.sample_orders_confirmed:,}")
+        print(f"  Orders shipped:    {self.metrics.sample_orders_shipped:,}")
+        print(f"  Orders delivered:  {self.metrics.sample_orders_delivered:,}")
         print(f"  Total DML ops:     {summary['total_dml_operations']:,}")
         print(f"  Effective TPS:     {summary['effective_tps']}")
         print(f"  Avg latency:       {summary['latency_avg_ms']}ms")
@@ -909,32 +929,32 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Standard test (5 min, 20 orders/sec)
-  python load_test_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN"
+  # Standard test (5 min, 20 sample_orders/sec)
+  python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN"
 
   # High-throughput
-  python load_test_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" \\
-      --orders-per-sec 100 --threads 8 --duration 600
+  python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" \\
+      --sample_orders-per-sec 100 --threads 8 --duration 600
 
   # Setup schema only
-  python load_test_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" --setup-only
+  python load_test_sample_orders.py --source-dsn "$SOURCE_DSN" --target-dsn "$TARGET_DSN" --setup-only
         """,
     )
     parser.add_argument("--source-dsn", default="", help="PostgreSQL source DSN")
     parser.add_argument("--target-dsn", default="", help="Aurora DSQL target DSN")
     parser.add_argument("--duration", type=int, default=300, help="Test duration seconds (default: 300)")
-    parser.add_argument("--orders-per-sec", type=int, default=20, help="Orders/second target (default: 20)")
+    parser.add_argument("--sample_orders-per-sec", type=int, default=20, help="Orders/second target (default: 20)")
     parser.add_argument("--threads", type=int, default=4, help="Parallel threads (default: 4)")
-    parser.add_argument("--seed-customers", type=int, default=500, help="Number of customers to seed")
-    parser.add_argument("--seed-products", type=int, default=200, help="Number of products to seed")
+    parser.add_argument("--seed-sample_customers", type=int, default=500, help="Number of sample_customers to seed")
+    parser.add_argument("--seed-sample_products", type=int, default=200, help="Number of sample_products to seed")
     parser.add_argument("--report-dir", default="results", help="Output directory")
     parser.add_argument("--setup-only", action="store_true", help="Only create schema and seed data")
 
     args = parser.parse_args()
     config = OrderTestConfig.from_args(args)
 
-    if not config.source_dsn or not config.target_dsn:
-        print("Error: --source-dsn and --target-dsn required (or set SOURCE_DSN/TARGET_DSN env vars)")
+    if not config.source_dsn:
+        print("Error: --source-dsn required (or set SOURCE_DSN env var)")
         sys.exit(1)
 
     metrics = TestMetrics()
@@ -943,6 +963,33 @@ Examples:
     # Setup
     test.setup_schema()
     test.seed_data()
+
+    # Create dedicated replication slot for load test (separate from production CDC)
+    SAMPLE_SLOT = "sample_cdc_slot"
+    SAMPLE_PUB = "sample_cdc_pub"
+    print(f"\nCreating dedicated load test slot: {SAMPLE_SLOT}...")
+    with psycopg2.connect(config.source_dsn) as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            # Create publication for sample tables only
+            sample_tables = ['sample_customers', 'sample_products', 'sample_inventory',
+                             'sample_orders', 'sample_order_items', 'sample_payments', 'sample_shipments']
+            tables_list = ', '.join(f'public.{t}' for t in sample_tables)
+            try:
+                cur.execute(f"CREATE PUBLICATION {SAMPLE_PUB} FOR TABLE {tables_list}")
+            except Exception as e:
+                if 'already exists' in str(e):
+                    pass
+                else:
+                    print(f"  Note: {e}")
+            try:
+                cur.execute(f"SELECT pg_create_logical_replication_slot('{SAMPLE_SLOT}', 'test_decoding')")
+            except Exception as e:
+                if 'already exists' in str(e):
+                    pass
+                else:
+                    print(f"  Note: {e}")
+    print(f"✓ Load test slot '{SAMPLE_SLOT}' ready")
 
     if args.setup_only:
         print("\n✓ Setup complete (--setup-only). Exiting.")
@@ -955,6 +1002,18 @@ Examples:
         print("\n⚠️  Interrupted")
         test._running = False
         metrics.end_time = time.time()
+
+    # Cleanup: Drop the load test slot (no WAL accumulation after test)
+    print(f"\nCleaning up load test slot: {SAMPLE_SLOT}...")
+    try:
+        with psycopg2.connect(config.source_dsn) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT pg_drop_replication_slot('{SAMPLE_SLOT}')")
+                cur.execute(f"DROP PUBLICATION IF EXISTS {SAMPLE_PUB}")
+        print(f"✓ Slot '{SAMPLE_SLOT}' dropped")
+    except Exception as e:
+        print(f"⚠️  Slot cleanup: {e}")
 
     # Validate & report
     integrity = test.validate()

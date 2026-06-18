@@ -24,10 +24,9 @@ Parameters:
     Description: Branch to deploy from
 
   # --- Database Config ---
-  SourceDSN:
+  SourceSecretArn:
     Type: String
-    NoEcho: true
-    Description: PostgreSQL source connection string (e.g., host=xxx port=5432 dbname=xxx user=xxx password=xxx sslmode=require)
+    Description: ARN or name of existing Secrets Manager secret. Secret must contain host, port, dbname, username, and password. Required format - {"username":"xxx","password":"xxx","engine":"postgres","host":"xxx.region.rds.amazonaws.com","port":5432,"dbname":"postgres","dbClusterIdentifier":"xxx"}
   
   TargetDSQLEndpoint:
     Type: String
@@ -91,12 +90,6 @@ Resources:
   # ==========================================================================
   # SECRETS
   # ==========================================================================
-  SourceDSNSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub ${AWS::StackName}/source-dsn
-      SecretString: !Ref SourceDSN
-
   # ==========================================================================
 
   # ==========================================================================
@@ -128,16 +121,22 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource:
-                  - !Ref SourceDSNSecret
+                  - !Ref SourceSecretArn
               - Effect: Allow
                 Action:
                   - s3:PutObject
                 Resource: !Sub ${CDCArchiveBucket.Arn}/*
               - Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
+                  - s3:ListBucket
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub ${FrontendBucket.Arn}
+                  - !Sub ${FrontendBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - logs:*
                 Resource: '*'
               - Effect: Allow
                 Action:
@@ -188,19 +187,9 @@ Resources:
           # Install Python dependencies
           python3.11 -m pip install psycopg2-binary boto3
 
-          # Get SOURCE_DSN from Secrets Manager (supports both plain DSN and RDS JSON format)
-          SECRET_RAW=$(aws secretsmanager get-secret-value --secret-id ${SourceDSNSecret} --query SecretString --output text --region ${AWS::Region})
-          # Check if it's JSON (RDS format) or plain DSN string
-          if echo "$SECRET_RAW" | python3.11 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
-            # RDS JSON format: {"username":"x","password":"x","host":"x","port":5432,"dbname":"x"}
-            SOURCE_DSN=$(echo "$SECRET_RAW" | python3.11 -c "
-import sys,json; s=json.load(sys.stdin)
-print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','postgres')} user={s['username']} password={s['password']} sslmode=require\")
-")
-          else
-            # Plain DSN string
-            SOURCE_DSN="$SECRET_RAW"
-          fi
+          # Get SOURCE_DSN from Secrets Manager (handles both plain DSN and RDS JSON format)
+          SECRET_RAW=$(aws secretsmanager get-secret-value --secret-id ${SourceSecretArn} --query SecretString --output text --region ${AWS::Region})
+          SOURCE_DSN=$(python3.11 -c "import json,sys;r=sys.argv[1];s=json.loads(r) if r.startswith('{') else None;print('host='+s['host']+' port='+str(s.get('port',5432))+' dbname='+s.get('dbname','postgres')+' user='+s['username']+' password=[REDACTED_PASSWORD] sslmode=require') if s else print(r)" "$SECRET_RAW")
 
           # Create environment file
           cat > /opt/cdc/.env << ENVEOF
@@ -218,7 +207,6 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
           METRICS_ENABLED=true
           LOG_LEVEL=INFO
           S3_BUCKET=${CDCArchiveBucket}
-          TABLE_RULES_FILE=/opt/cdc/table_rules.json
           CONTROL_FILE=/opt/cdc/control.json
           ENVEOF
 
@@ -239,8 +227,8 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
           ExecStart=/usr/bin/python3.11 /opt/cdc/cdc_service.py
           Restart=on-failure
           RestartSec=5
-          StandardOutput=journal
-          StandardError=journal
+          StandardOutput=append:/var/log/cdc/cdc-service.log
+          StandardError=append:/var/log/cdc/cdc-service.log
 
           [Install]
           WantedBy=multi-user.target
@@ -254,28 +242,15 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
           systemctl enable cdc-service
           systemctl start cdc-service
 
-          # Configure CloudWatch Logs agent to ship CDC service logs
+
+          # Configure CloudWatch Logs agent (file-based collection)
           yum install -y amazon-cloudwatch-agent || true
-          cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << CWEOF
-          {
-            "logs": {
-              "logs_collected": {
-                "journald": {
-                  "collect_list": [
-                    {
-                      "unit": "cdc-service",
-                      "log_group_name": "/ec2/${AWS::StackName}-cdc",
-                      "log_stream_name": "{instance_id}",
-                      "retention_in_days": 30
-                    }
-                  ]
-                }
-              }
-            }
-          }
+          mkdir -p /var/log/cdc
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWEOF'
+          {"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/cdc/cdc-service.log","log_group_name":"/ec2/${AWS::StackName}-cdc","log_stream_name":"{instance_id}","retention_in_days":30}]}}}}
           CWEOF
           sed -i 's/^[[:space:]]*//' /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json || true
 
           # Deploy frontend to S3 (so dashboard works immediately without pipeline)
           aws s3 sync /opt/cdc/frontend/ s3://${FrontendBucket}/ --delete --region ${AWS::Region}
@@ -371,7 +346,7 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
             TargetOriginId: APIOrigin
             ViewerProtocolPolicy: https-only
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
-            AllowedMethods: [GET, HEAD, OPTIONS]
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # AllViewerExceptHostHeader
         PriceClass: PriceClass_100
 
@@ -424,6 +399,8 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
           CW_NAMESPACE: CDC/PgToDSQL
           CDC_INSTANCE_ID: !Ref CDCInstance
           CDC_HEALTH_PORT: '8080'
+          LOG_GROUP_NAME: !Sub /ec2/${AWS::StackName}-cdc
+          CDC_PRIVATE_IP: !GetAtt CDCInstance.PrivateIp
           S3_BUCKET: !Ref CDCArchiveBucket
       Code:
         ZipFile: |
@@ -493,14 +470,9 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
           def get_health():
               import urllib.request
               try:
-                  ec2 = boto3.client('ec2')
                   instance_id = os.environ['CDC_INSTANCE_ID']
+                  private_ip = os.environ.get('CDC_PRIVATE_IP', '')
                   port = os.environ.get('CDC_HEALTH_PORT', '8080')
-                  # Get private IP of the CDC instance
-                  resp = ec2.describe_instances(InstanceIds=[instance_id])
-                  instances = resp['Reservations'][0]['Instances']
-                  private_ip = instances[0]['PrivateIpAddress']
-                  # Call the CDC health endpoint
                   url = f'http://{private_ip}:{port}/health'
                   req = urllib.request.urlopen(url, timeout=5)
                   health_data = json.loads(req.read().decode())
@@ -526,7 +498,6 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
               rules = body.get('rules', [])
               count = sum(1 for r in rules if r.get('rule-type') == 'selection')
               b64 = base64.b64encode(json.dumps(body, indent=2).encode()).decode()
-              cmd = f'echo {b64} | base64 -d > /opt/cdc/table_rules.json'
               ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]})
               return response(200, {'status': 'applied', 'rules_count': count})
 
@@ -565,8 +536,11 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
               threads = int(body.get('threads', 4))
               cmd = (
                   f'set -a && source /opt/cdc/.env && set +a && '
-                  f'cd /opt/cdc && python3.11 /opt/cdc/load_test_orders.py '
+                  f'cd /opt/cdc && '
+                  f'DSQL_TOKEN=$(python3.11 -c "import boto3;print(boto3.client(\'dsql\',region_name=\'$DSQL_REGION\').generate_db_connect_admin_auth_token(Hostname=\'$DSQL_HOSTNAME\',Region=\'$DSQL_REGION\',ExpiresIn=900))") && '
+                  f'python3.11 /opt/cdc/load_test_orders.py '
                   f'--source-dsn "$SOURCE_DSN" '
+                  f'--target-dsn "host=$DSQL_HOSTNAME port=5432 dbname=postgres user=admin password=$DSQL_TOKEN sslmode=require" '
                   f'--duration {duration} '
                   f'--orders-per-sec {ops} '
                   f'--threads {threads} '
@@ -603,6 +577,7 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
           def post_test_connection(body):
               import time as t
               ssm = boto3.client('ssm')
+              logs = boto3.client('logs')
               instance_id = os.environ['CDC_INSTANCE_ID']
               source_dsn = body.get('source_dsn', '')
               target_dsn = body.get('target_dsn', '')
@@ -611,7 +586,7 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
               if source_dsn:
                   cmd = f'python3.11 -c "import psycopg2; c=psycopg2.connect(\'{source_dsn}\'); cur=c.cursor(); cur.execute(\'SELECT version()\'); print(cur.fetchone()[0][:50]); c.close()"'
                   try:
-                      r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]}, TimeoutSeconds=15)
+                      r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]}, TimeoutSeconds=30)
                       t.sleep(5)
                       inv = ssm.get_command_invocation(CommandId=r['Command']['CommandId'], InstanceId=instance_id)
                       if inv['Status'] == 'Success':
@@ -627,7 +602,7 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
               if target_dsn:
                   cmd = f'python3.11 -c "import psycopg2, boto3; c=boto3.client(\'dsql\',region_name=\'us-east-1\'); t=c.generate_db_connect_admin_auth_token(Hostname=\'{target_dsn}\',Region=\'us-east-1\',ExpiresIn=900); conn=psycopg2.connect(host=\'{target_dsn}\',port=5432,dbname=\'postgres\',user=\'admin\',password=t,sslmode=\'require\'); cur=conn.cursor(); cur.execute(\'SELECT 1\'); print(\'DSQL connected\'); conn.close()"'
                   try:
-                      r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]}, TimeoutSeconds=15)
+                      r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]}, TimeoutSeconds=30)
                       t.sleep(5)
                       inv = ssm.get_command_invocation(CommandId=r['Command']['CommandId'], InstanceId=instance_id)
                       if inv['Status'] == 'Success':
@@ -639,6 +614,15 @@ print(f\"host={s['host']} port={s.get('port',5432)} dbname={s.get('dbname','post
                   except Exception as e:
                       results['target_ok'] = False
                       results['target_error'] = str(e)[:200]
+              # Log test results to CloudWatch
+              try:
+                  import time as t2
+                  log_group = os.environ.get('LOG_GROUP_NAME', '/ec2/cdc-service')
+                  log_stream = 'connection-tests'
+                  try: logs.create_log_stream(logGroupName=log_group, logStreamName=log_stream)
+                  except: pass
+                  logs.put_log_events(logGroupName=log_group, logStreamName=log_stream, logEvents=[{'timestamp': int(t2.time()*1000), 'message': json.dumps(results)}])
+              except: pass
               return response(200, results)
 
           def post_dsn(body):

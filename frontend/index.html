@@ -3,263 +3,122 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PostgreSQL → Aurora DSQL CDC Dashboard</title>
+    <title>PG → DSQL CDC Replicator</title>
     <link rel="stylesheet" href="css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </head>
 <body>
-    <nav class="sidebar">
-        <div class="sidebar-header">
-            <div class="logo">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                    <path d="M2 17l10 5 10-5"/>
-                    <path d="M2 12l10 5 10-5"/>
-                </svg>
-                <span>CDC Monitor</span>
-            </div>
-            <p class="subtitle">PG → Aurora DSQL</p>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="header-title">PG → DSQL CDC Replicator</h1>
+            <span class="header-subtitle">Real-time Change Data Capture</span>
         </div>
-        <ul class="nav-links">
-            <li><a href="#" class="nav-link active" data-page="overview">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-                Overview
-            </a></li>
-            <li><a href="#" class="nav-link" data-page="tables">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg>
-                Table Status
-            </a></li>
-            <li><a href="#" class="nav-link" data-page="events">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
-                Event Log
-            </a></li>
-            <li><a href="#" class="nav-link" data-page="config">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-                Configuration
-            </a></li>
-            <li><a href="#" class="nav-link" data-page="loadtest">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                Load Test
-            </a></li>
-            <li><a href="#" class="nav-link" data-page="table-mapping">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18"/></svg>
-                Table Mapping
-            </a></li>
-        </ul>
-        <div class="sidebar-footer">
-            <div class="status-indicator" id="connectionStatus">
+        <nav class="header-nav">
+            <a href="#" class="nav-link active" data-page="tables">Table Status</a>
+            <a href="#" class="nav-link" data-page="config">Configuration</a>
+            <a href="#" class="nav-link" data-page="table-mapping">Table Mapping</a>
+            <a href="#" class="nav-link" data-page="loadtest">Load Test</a>
+        </nav>
+        <div class="header-right">
+            <span id="connectionStatus" class="connection-status">
                 <span class="status-dot"></span>
                 <span class="status-text">Connecting...</span>
-            </div>
+            </span>
         </div>
-    </nav>
+    </header>
 
-    <main class="content">
-        <!-- Overview Page -->
-        <section id="page-overview" class="page active">
+    <!-- Main Content -->
+    <main class="main-content">
+
+        <!-- Table Status Page (DEFAULT) -->
+        <section id="page-tables" class="page active">
             <div class="page-header">
-                <h1>CDC Pipeline Overview</h1>
-                <div class="header-actions">
-                    <span class="last-updated" id="lastUpdated">Last updated: --</span>
-                    <button class="btn btn-sm" onclick="CDC.refresh()">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
-                        Refresh
-                    </button>
+                <h2>Table Replication Status</h2>
+                <div class="control-bar">
+                    <span id="controlStateBadge" class="badge badge-running">Running</span>
+                    <button class="btn btn-secondary" onclick="CDC.controlReplication('start')">▶ Start</button>
+                    <button class="btn btn-warning" onclick="CDC.controlReplication('stop')">⏹ Stop</button>
+                    <span class="last-updated" id="lastUpdated">--</span>
                 </div>
             </div>
 
-            <!-- KPI Cards -->
-            <div class="kpi-grid">
-                <div class="kpi-card">
-                    <div class="kpi-icon blue">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                    </div>
-                    <div class="kpi-content">
-                        <span class="kpi-label">Events / Second</span>
-                        <span class="kpi-value" id="kpi-tps">--</span>
-                    </div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon orange">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                    </div>
-                    <div class="kpi-content">
-                        <span class="kpi-label">Replication Lag</span>
-                        <span class="kpi-value" id="kpi-lag">--</span>
-                    </div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon green">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                    </div>
-                    <div class="kpi-content">
-                        <span class="kpi-label">Events Applied</span>
-                        <span class="kpi-value" id="kpi-applied">--</span>
-                    </div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon red">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                    </div>
-                    <div class="kpi-content">
-                        <span class="kpi-label">Failed Events</span>
-                        <span class="kpi-value" id="kpi-failed">--</span>
-                    </div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon purple">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
-                    </div>
-                    <div class="kpi-content">
-                        <span class="kpi-label">Queue Depth</span>
-                        <span class="kpi-value" id="kpi-queue">--</span>
-                    </div>
-                </div>
-                <div class="kpi-card">
-                    <div class="kpi-icon teal">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                    </div>
-                    <div class="kpi-content">
-                        <span class="kpi-label">Checkpoint LSN</span>
-                        <span class="kpi-value kpi-value-sm" id="kpi-lsn">--</span>
-                    </div>
-                </div>
-            </div>
 
-            <!-- Charts -->
-            <div class="charts-grid">
-                <div class="chart-card">
-                    <h3>Throughput (Events/Second)</h3>
-                    <canvas id="chart-tps"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h3>Replication Lag (Bytes)</h3>
-                    <canvas id="chart-lag"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h3>Queue Depth</h3>
-                    <canvas id="chart-queue"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h3>Failed Events (Cumulative)</h3>
-                    <canvas id="chart-failed"></canvas>
-                </div>
-            </div>
-        </section>
-
-        <!-- Table Status Page -->
-        <section id="page-tables" class="page">
-            <div class="page-header">
-                <h1>Table Replication Status</h1>
-            </div>
-            <div class="table-container">
+            <!-- Table Status Table -->
+            <div class="card">
                 <table class="data-table">
                     <thead>
                         <tr>
                             <th>Table Name</th>
                             <th>Status</th>
-                            <th>Last Event</th>
+                            <th>Last Updated</th>
                             <th>Events Applied</th>
                             <th>Operations</th>
                             <th>Errors</th>
                         </tr>
                     </thead>
                     <tbody id="tableStatusBody">
-                        <tr><td colspan="6" class="empty-state">Loading table status...</td></tr>
+                        <tr><td colspan="6" class="empty-state">No tables being replicated yet. Start a load test or insert data into source tables.</td></tr>
                     </tbody>
                 </table>
             </div>
+
         </section>
 
-        <!-- Event Log Page -->
-        <section id="page-events" class="page">
-            <div class="page-header">
-                <h1>Event Log</h1>
-                <div class="header-actions">
-                    <select id="eventFilter" class="select-input">
-                        <option value="all">All Events</option>
-                        <option value="error">Errors Only</option>
-                        <option value="warning">Warnings</option>
-                        <option value="info">Info</option>
-                    </select>
-                </div>
-            </div>
-            <div class="event-log" id="eventLog">
-                <div class="empty-state">Loading events...</div>
-            </div>
-        </section>
-
-<!-- Configuration Page -->
+        <!-- Configuration Page -->
         <section id="page-config" class="page">
             <div class="page-header">
-                <h1>Configuration</h1>
+                <h2>Configuration</h2>
             </div>
             <div class="config-grid">
-                <div class="config-card">
-                    <h3>Dashboard Settings</h3>
-                    <div class="config-form">
-                        <div class="form-group">
-                            <label for="cfgApiUrl">API Endpoint</label>
-                            <input type="text" id="cfgApiUrl" class="form-input" placeholder="Auto-detected">
-                            <span class="form-help">API Gateway endpoint (auto-configured on deployment)</span>
-                        </div>
-                        <div class="form-group">
-                            <label for="cfgRefreshInterval">Refresh Interval (seconds)</label>
-                            <input type="number" id="cfgRefreshInterval" class="form-input" value="5" min="1" max="60">
-                        </div>
-                        <button class="btn btn-primary" onclick="CDC.saveConnectionSettings()">Save</button>
-                    </div>
-                </div>
-                <div class="config-card">
+                <!-- Database Connections -->
+                <div class="card">
                     <h3>Database Connections</h3>
-                    <div class="config-form">
-                        <div class="form-group">
-                            <label for="cfgSourceDSN">Source PostgreSQL DSN</label>
-                            <input type="text" id="cfgSourceDSN" class="form-input" placeholder="host=xxx port=5432 dbname=postgres user=xxx password=xxx sslmode=require">
-                            <span class="form-help">PostgreSQL source connection string</span>
-                        </div>
-                        <div class="form-group">
-                            <label for="cfgTargetDSN">Target Aurora DSQL Endpoint</label>
-                            <input type="text" id="cfgTargetDSN" class="form-input" placeholder="xxx.dsql.us-east-1.on.aws">
-                            <span class="form-help">DSQL cluster endpoint (IAM auth handled automatically)</span>
-                        </div>
-                        <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-secondary" onclick="CDC.testConnectivity()">🔗 Test Connectivity</button>
-                            <button class="btn btn-primary" onclick="CDC.saveDSN()">Save DSN</button>
-                        </div>
-                        <div id="connectivityResult" class="validation-message" style="display:none; margin-top: 12px;"></div>
+                    <div class="form-group">
+                        <label for="cfgSourceDSN">Source PostgreSQL DSN</label>
+                        <input type="text" id="cfgSourceDSN" class="form-input" placeholder="host=xxx port=5432 dbname=postgres user=xxx password=[REDACTED_PASSWORD] sslmode=require">
+                        <span class="form-help">PostgreSQL source connection string</span>
                     </div>
+                    <div class="form-group">
+                        <label for="cfgTargetDSN">Target Aurora DSQL Endpoint</label>
+                        <input type="text" id="cfgTargetDSN" class="form-input" placeholder="xxx.dsql.us-east-1.on.aws">
+                        <span class="form-help">DSQL cluster endpoint (IAM auth handled automatically)</span>
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn btn-secondary" onclick="CDC.testConnectivity()">🔗 Test Connectivity</button>
+                        <button class="btn btn-primary" onclick="CDC.saveDSN()">Save DSN</button>
+                    </div>
+                    <div id="connectivityResult" class="alert" style="display:none;"></div>
                 </div>
-                <div class="config-card">
+
+                <!-- Replication Settings -->
+                <div class="card">
                     <h3>Replication Settings</h3>
-                    <div class="config-form">
-                        <div class="form-group">
-                            <label for="cfgBatchSize">Batch Size</label>
-                            <input type="number" id="cfgBatchSize" class="form-input" value="1000" min="1" max="50000">
-                            <span class="form-help">Number of events per batch write to DSQL</span>
-                        </div>
-                        <div class="form-group">
-                            <label for="cfgConflictMode">Conflict Resolution Mode</label>
-                            <select id="cfgConflictMode" class="form-input">
-                                <option value="last_write_wins">Last Write Wins</option>
-                                <option value="source_wins">Source Wins</option>
-                                <option value="skip">Skip Conflicts</option>
-                                <option value="error">Error on Conflict</option>
-                            </select>
-                            <span class="form-help">How to handle write conflicts in DSQL</span>
-                        </div>
-                        <div class="form-group">
-                            <label for="cfgSlotName">Replication Slot</label>
-                            <input type="text" id="cfgSlotName" class="form-input" value="cdc_dsql_slot" readonly>
-                            <span class="form-help">PostgreSQL logical replication slot (read-only)</span>
-                        </div>
-                        <button class="btn btn-primary" onclick="CDC.saveConfig()">Save Configuration</button>
+                    <div class="form-group">
+                        <label for="cfgBatchSize">Batch Size</label>
+                        <input type="number" id="cfgBatchSize" class="form-input" value="1000" min="1" max="50000">
+                        <span class="form-help">Number of events per batch write to DSQL</span>
                     </div>
+                    <div class="form-group">
+                        <label for="cfgConflictMode">Conflict Resolution</label>
+                        <select id="cfgConflictMode" class="form-input">
+                            <option value="upsert">Upsert (default)</option>
+                            <option value="last_write_wins">Last Write Wins</option>
+                            <option value="skip">Skip Conflicts</option>
+                            <option value="fail">Error on Conflict</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="cfgSlotName">Replication Slot</label>
+                        <input type="text" id="cfgSlotName" class="form-input" value="dsql_cdc_slot" readonly>
+                        <span class="form-help">PostgreSQL logical replication slot (read-only)</span>
+                    </div>
+                    <button class="btn btn-primary" onclick="CDC.saveConfig()">Save Configuration</button>
                 </div>
-                <div class="config-card">
+
+                <!-- Service Info -->
+                <div class="card">
                     <h3>Service Info</h3>
-                    <div class="info-list">
+                    <div class="info-grid">
                         <div class="info-item">
                             <span class="info-label">Plugin</span>
                             <span class="info-value" id="infoPlugin">--</span>
@@ -282,126 +141,20 @@
                         </div>
                     </div>
                 </div>
-            </div>
-        </section>
 
-        <!-- Load Test Page -->
-        <section id="page-loadtest" class="page">
-            <div class="page-header">
-                <h1>Load Test</h1>
-                <div class="header-actions">
-                    <span class="loadtest-status" id="loadtestStatusBadge">
-                        <span class="badge badge-muted">Idle</span>
-                    </span>
-                </div>
-            </div>
-
-            <!-- Config Form -->
-            <div class="loadtest-config">
-                <div class="config-card">
-                    <h3>Test Configuration</h3>
-                    <div class="loadtest-form">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="ltDuration">Duration (seconds)</label>
-                                <input type="number" id="ltDuration" class="form-input" value="300" min="30" max="3600">
-                            </div>
-                            <div class="form-group">
-                                <label for="ltOrdersPerSec">Orders / Second</label>
-                                <input type="number" id="ltOrdersPerSec" class="form-input" value="20" min="1" max="500">
-                            </div>
-                            <div class="form-group">
-                                <label for="ltThreads">Threads</label>
-                                <input type="number" id="ltThreads" class="form-input" value="4" min="1" max="32">
-                            </div>
-                            <div class="form-group">
-                                <label for="ltMode">Mode</label>
-                                <select id="ltMode" class="form-input">
-                                    <option value="mixed">Mixed (60% INSERT, 30% UPDATE, 10% DELETE)</option>
-                                    <option value="insert">INSERT Only</option>
-                                    <option value="update">UPDATE Only</option>
-                                    <option value="delete">DELETE Only</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="form-actions">
-                            <button class="btn btn-primary btn-lg" id="btnStartTest" onclick="CDC.startLoadTest()">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                                Start Load Test
-                            </button>
-                            <button class="btn btn-danger btn-lg" id="btnStopTest" onclick="CDC.stopLoadTest()" style="display:none;">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
-                                Stop Test
-                            </button>
-                        </div>
+                <!-- Dashboard Settings -->
+                <div class="card">
+                    <h3>Dashboard Settings</h3>
+                    <div class="form-group">
+                        <label for="cfgApiUrl">API Endpoint</label>
+                        <input type="text" id="cfgApiUrl" class="form-input" placeholder="/api">
+                        <span class="form-help">API Gateway endpoint URL</span>
                     </div>
-                </div>
-            </div>
-
-            <!-- Progress Section -->
-            <div class="loadtest-progress" id="loadtestProgress" style="display:none;">
-                <div class="kpi-grid">
-                    <div class="kpi-card">
-                        <div class="kpi-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
-                        <div class="kpi-content">
-                            <span class="kpi-label">Elapsed</span>
-                            <span class="kpi-value" id="lt-elapsed">--</span>
-                        </div>
+                    <div class="form-group">
+                        <label for="cfgRefreshInterval">Refresh Interval (seconds)</label>
+                        <input type="number" id="cfgRefreshInterval" class="form-input" value="5" min="1" max="60">
                     </div>
-                    <div class="kpi-card">
-                        <div class="kpi-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-                        <div class="kpi-content">
-                            <span class="kpi-label">Orders Placed</span>
-                            <span class="kpi-value" id="lt-orders">--</span>
-                        </div>
-                    </div>
-                    <div class="kpi-card">
-                        <div class="kpi-icon purple"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
-                        <div class="kpi-content">
-                            <span class="kpi-label">DML Operations</span>
-                            <span class="kpi-value" id="lt-dml">--</span>
-                        </div>
-                    </div>
-                    <div class="kpi-card">
-                        <div class="kpi-icon orange"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
-                        <div class="kpi-content">
-                            <span class="kpi-label">Effective TPS</span>
-                            <span class="kpi-value" id="lt-tps">--</span>
-                        </div>
-                    </div>
-                    <div class="kpi-card">
-                        <div class="kpi-icon red"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>
-                        <div class="kpi-content">
-                            <span class="kpi-label">Errors</span>
-                            <span class="kpi-value" id="lt-errors">--</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Live Log Output -->
-            <div class="loadtest-log-section">
-                <div class="config-card">
-                    <h3>Live Output</h3>
-                    <div class="loadtest-log" id="loadtestLog">
-                        <div class="log-placeholder">Start a load test to see live output...</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Results Section -->
-            <div class="loadtest-results" id="loadtestResults" style="display:none;">
-                <div class="config-card">
-                    <h3>Data Integrity Validation</h3>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr><th>Table</th><th>Source Rows</th><th>Target Rows</th><th>Match</th><th>Diff</th></tr>
-                            </thead>
-                            <tbody id="ltIntegrityBody">
-                            </tbody>
-                        </table>
-                    </div>
+                    <button class="btn btn-primary" onclick="CDC.saveConnectionSettings()">Save</button>
                 </div>
             </div>
         </section>
@@ -409,70 +162,146 @@
         <!-- Table Mapping Page -->
         <section id="page-table-mapping" class="page">
             <div class="page-header">
-                <h1>Table Mapping &amp; Control</h1>
+                <h2>Table Mapping Rules</h2>
             </div>
-
-            <!-- Replication Control -->
-            <div class="config-card">
-                <h3>Replication Control</h3>
-                <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px;">
-                    <span style="color: var(--text-secondary); font-size: 14px;">Current State:</span>
-                    <span class="status-badge running" id="controlStateBadge">&#x1F7E2; Running</span>
-                </div>
-                <div class="control-buttons">
-                    <button class="btn btn-success" onclick="CDC.controlReplication('start')">&#x25B6; Start</button>
-                    <button class="btn btn-warning" onclick="CDC.controlReplication('pause')">&#x23F8; Pause</button>
-                    <button class="btn btn-primary" onclick="CDC.controlReplication('resume')">&#x23F5; Resume</button>
-                    <button class="btn btn-danger" onclick="CDC.controlReplication('stop')">&#x23F9; Stop</button>
-                </div>
-            </div>
-
-            <!-- Table Selection Rules -->
-            <div class="config-card" style="margin-top: 20px;">
-                <h3>Table Selection Rules (DMS Format)</h3>
-                <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 12px;">
-                    Define which tables to replicate using DMS-style JSON rules. Use <code style="color: var(--accent-blue);">%</code> for wildcard matching.
-                </p>
-                <textarea id="rulesTextarea" class="rules-textarea" placeholder='{
+            <div class="config-grid">
+                <div class="card card-wide">
+                    <h3>Table Selection Rules (DMS Format)</h3>
+                    <p class="form-help">Define which tables to replicate using DMS-style JSON rules. Use <code>%</code> for wildcard matching.</p>
+                    <textarea id="rulesTextarea" class="rules-textarea" placeholder='{
   "rules": [
     {
       "rule-type": "selection",
       "rule-id": "1",
-      "rule-name": "include-all-public",
-      "object-locator": {
-        "schema-name": "public",
-        "table-name": "%"
-      },
+      "rule-name": "include-all",
+      "object-locator": {"schema-name": "public", "table-name": "%"},
       "rule-action": "include"
-    },
-    {
-      "rule-type": "selection",
-      "rule-id": "2",
-      "rule-name": "exclude-temp",
-      "object-locator": {
-        "schema-name": "public",
-        "table-name": "tmp_%"
-      },
-      "rule-action": "exclude"
     }
   ]
 }'></textarea>
-                <div id="validationMessage" class="validation-message" style="display:none;"></div>
-                <div style="display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap;">
-                    <input type="file" id="rulesFileInput" accept=".json" style="display:none;" onchange="CDC.uploadRulesFile(event)">
-                    <button class="btn" onclick="document.getElementById('rulesFileInput').click()">&#x1F4C1; Upload JSON</button>
-                    <button class="btn" onclick="CDC.validateTableMapping()">&#x2713; Validate</button>
-                    <button class="btn btn-primary" onclick="CDC.applyTableMapping()">Apply Rules</button>
+                    <div id="validationMessage" class="alert" style="display:none;"></div>
+                    <div class="btn-row">
+                        <input type="file" id="rulesFileInput" accept=".json" style="display:none;" onchange="CDC.uploadRulesFile(event)">
+                        <button class="btn btn-secondary" onclick="document.getElementById('rulesFileInput').click()">📁 Upload JSON</button>
+                        <button class="btn btn-secondary" onclick="CDC.validateTableMapping()">✓ Validate</button>
+                        <button class="btn btn-primary" onclick="CDC.applyTableMapping()">Apply Rules</button>
+                    </div>
+                </div>
+                <div class="card card-wide">
+                    <h3>Currently Active Rules</h3>
+                    <pre id="currentRulesDisplay" class="rules-display">Loading...</pre>
+                    <button class="btn btn-secondary" onclick="CDC.loadTableMapping()" style="margin-top:12px;">↻ Refresh</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Load Test Page -->
+        <section id="page-loadtest" class="page">
+            <div class="page-header">
+                <h2>Load Test</h2>
+                <span id="loadtestStatusBadge" class="badge badge-idle">Idle</span>
+            </div>
+
+            <!-- Load Test Info -->
+            <div class="card" style="margin-bottom: 20px; border-left: 4px solid var(--color-primary, #0972d3);">
+                <h3>ℹ️ How Load Testing Works</h3>
+                <div style="padding: 16px; font-size: 14px; line-height: 1.7;">
+                    <p><strong>What it does:</strong></p>
+                    <ul style="margin: 8px 0 12px 20px;">
+                        <li>Creates <code>sample_*</code> prefixed tables (e.g., <code>sample_orders</code>, <code>sample_customers</code>) on your source PostgreSQL</li>
+                        <li>Creates a <strong>dedicated replication slot</strong> (<code>sample_cdc_slot</code>) — completely separate from your production CDC slot</li>
+                        <li>Generates synthetic order data (customers, products, orders, payments, shipments) at your configured throughput</li>
+                        <li>Drops the test slot automatically when the load test finishes — no WAL accumulation</li>
+                    </ul>
+                    <p><strong>Limitations & Safety:</strong></p>
+                    <ul style="margin: 8px 0 0 20px;">
+                        <li>✅ Automatically creates <code>sample_*</code> tables on both source PG and target DSQL</li>
+                        <li>✅ Never reads or modifies your Table Mapping rules</li>
+                        <li>✅ Never touches your existing tables or production replication slot</li>
+                        <li>✅ Uses its own publication — zero interference with your live CDC pipeline</li>
+                    </ul>
                 </div>
             </div>
 
-            <!-- Current Active Rules -->
-            <div class="config-card" style="margin-top: 20px;">
-                <h3>Currently Active Rules</h3>
-                <pre id="currentRulesDisplay" style="background: var(--bg-primary); padding: 16px; border-radius: 8px; font-size: 0.8rem; color: var(--text-secondary); overflow-x: auto; max-height: 200px; border: 1px solid var(--border-color);">Loading...</pre>
+            <div class="config-grid">
+                <div class="card">
+                    <h3>Test Configuration</h3>
+                    <div class="form-group">
+                        <label for="ltDuration">Duration (seconds)</label>
+                        <input type="number" id="ltDuration" class="form-input" value="300" min="10" max="3600">
+                    </div>
+                    <div class="form-group">
+                        <label for="ltOrdersPerSec">Orders per Second</label>
+                        <input type="number" id="ltOrdersPerSec" class="form-input" value="20" min="1" max="500">
+                    </div>
+                    <div class="form-group">
+                        <label for="ltThreads">Threads</label>
+                        <input type="number" id="ltThreads" class="form-input" value="4" min="1" max="32">
+                    </div>
+                    <div class="form-group">
+                        <label for="ltMode">Mode</label>
+                        <select id="ltMode" class="form-input">
+                            <option value="mixed">Mixed (insert/update/delete)</option>
+                            <option value="insert_only">Insert Only</option>
+                            <option value="heavy_update">Heavy Updates</option>
+                        </select>
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn btn-primary" id="btnStartTest" onclick="CDC.startLoadTest()">▶ Start Load Test</button>
+                        <button class="btn btn-danger" id="btnStopTest" onclick="CDC.stopLoadTest()" style="display:none;">⏹ Stop</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Live Results</h3>
+                    <div class="kpi-row kpi-row-sm">
+                        <div class="kpi-card"><span class="kpi-label">Orders</span><span class="kpi-value" id="lt-orders">--</span></div>
+                        <div class="kpi-card"><span class="kpi-label">DML Ops</span><span class="kpi-value" id="lt-dml">--</span></div>
+                        <div class="kpi-card"><span class="kpi-label">TPS</span><span class="kpi-value" id="lt-tps">--</span></div>
+                        <div class="kpi-card"><span class="kpi-label">Elapsed</span><span class="kpi-value" id="lt-elapsed">--</span></div>
+                        <div class="kpi-card"><span class="kpi-label">Errors</span><span class="kpi-value" id="lt-errors">--</span></div>
+                    </div>
+                    <div id="loadtestProgress" class="progress-bar" style="display:none;">
+                        <div class="progress-fill"></div>
+                    </div>
+                </div>
+
+                <div class="card card-wide">
+                    <h3>Output Log</h3>
+                    <div id="loadtestLog" class="log-output">Waiting for test to start...</div>
+                    <div id="loadtestResults" style="display:none;"></div>
+                </div>
             </div>
+
+            <!-- Sample Table Status during Load Test -->
+            <div class="card" style="margin-top: 20px;">
+                <h3>Sample Table Replication Status</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Table Name</th>
+                            <th>Status</th>
+                            <th>Events Applied</th>
+                            <th>Operations</th>
+                            <th>Errors</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sampleTableStatusBody">
+                        <tr><td colspan="6" class="empty-state">Run a load test to see sample table status</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
         </section>
+
     </main>
+
+    <!-- Hidden elements for compatibility -->
+    <div id="eventLog" style="display:none;"></div>
+    <select id="eventFilter" style="display:none;"></select>
+    <div id="statusBadge" style="display:none;"></div>
+    <div id="ltIntegrityBody" style="display:none;"></div>
 
     <script src="js/app.js"></script>
 </body>

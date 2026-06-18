@@ -112,7 +112,8 @@ const CDC = (() => {
         try {
             const url = `${CONFIG.apiBaseUrl}/health`;
             const response = await fetch(url);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            // Accept 503 (unhealthy) — still contains valid JSON status data
+            if (response.status !== 200 && response.status !== 503) throw new Error(`HTTP ${response.status}`);
             return await response.json();
         } catch (err) {
             console.error('Failed to fetch health:', err);
@@ -203,16 +204,47 @@ const CDC = (() => {
             return;
         }
 
-        tbody.innerHTML = tables.map(t => `
+        // Split into sample tables and user tables
+        const userTables = tables.filter(t => !t.name.includes('sample_'));
+        const sampleTables = tables.filter(t => t.name.includes('sample_'));
+
+        // Update main table status (user tables only)
+        if (userTables.length) {
+            tbody.innerHTML = userTables.map(t => renderTableRow(t)).join('');
+        } else {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No user tables being replicated yet</td></tr>';
+        }
+
+        // Update sample table status on Load Test page
+        const sampleTbody = document.getElementById('sampleTableStatusBody');
+        if (sampleTbody && sampleTables.length) {
+            sampleTbody.innerHTML = sampleTables.map(t => renderTableRow(t)).join('');
+            // Store last load values in localStorage
+            localStorage.setItem('cdc_last_loadtest', JSON.stringify(sampleTables));
+        } else if (sampleTbody && !sampleTables.length) {
+            // Restore last stored values
+            const stored = localStorage.getItem('cdc_last_loadtest');
+            if (stored) {
+                try {
+                    const lastTables = JSON.parse(stored);
+                    sampleTbody.innerHTML = lastTables.map(t => renderTableRow(t)).join('');
+                } catch(e) {}
+            }
+        }
+    }
+
+    function renderTableRow(t) {
+        const lastUpdated = t.lastEvent ? new Date(t.lastEvent * 1000).toLocaleString() : '--';
+        return `
             <tr>
                 <td><code>${t.name}</code></td>
                 <td><span class="badge badge-${t.errors > 0 ? 'red' : t.eventsApplied > 0 ? 'green' : 'orange'}">${t.errors > 0 ? 'errors' : t.eventsApplied > 0 ? 'active' : 'idle'}</span></td>
-                <td>${t.lastEvent ? new Date(t.lastEvent * 1000).toLocaleTimeString() : '--'}</td>
+                <td>${lastUpdated}</td>
                 <td>${formatNumber(t.eventsApplied || 0)}</td>
                 <td>${t.operations ? Object.entries(t.operations).map(([k,v]) => k + ':' + v).join(' ') : '--'}</td>
                 <td>${t.errors || 0}</td>
             </tr>
-        `).join('');
+        `;
     }
 
     // ─── Event Log ────────────────────────────────────────────────────
@@ -244,6 +276,16 @@ const CDC = (() => {
             setText('infoUptime', `${h}h ${m}m`);
         }
         setText('infoRegion', health.region || 'us-east-1');
+
+        // Populate current DSN fields (show what's configured, don't overwrite user edits)
+        const srcInput = document.getElementById('cfgSourceDSN');
+        const tgtInput = document.getElementById('cfgTargetDSN');
+        if (srcInput && !srcInput.value && health.source_dsn) {
+            srcInput.value = health.source_dsn;
+        }
+        if (tgtInput && !tgtInput.value && health.target_endpoint) {
+            tgtInput.value = health.target_endpoint;
+        }
     }
 
     // ─── Configuration ────────────────────────────────────────────────

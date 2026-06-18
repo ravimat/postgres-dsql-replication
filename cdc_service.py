@@ -1974,6 +1974,11 @@ class CDCService:
     def get_health_status(self) -> dict:
         snapshot = self.metrics.get_snapshot()
         lag_bytes = snapshot["gauges"]["replication_lag_bytes"]
+        # Mask password in DSN for display
+        import re
+        source_display = re.sub(r'password=\S+', 'password=****', self.config.source_dsn) if self.config.source_dsn else '--'
+        target_display = os.environ.get('DSQL_HOSTNAME', '--')
+        source_dsn_masked = re.sub(r'password=\S+', 'password=***', self.config.source_dsn) if self.config.source_dsn else ''
         return {
             "healthy": self._is_streaming and lag_bytes < self.config.max_lag_bytes,
             "streaming": self._is_streaming,
@@ -1990,6 +1995,10 @@ class CDCService:
             "table_rules_count": self._rule_engine.rules_count,
             "table_rules_summary": self._rule_engine.rules_summary,
             "tables": snapshot.get("tables", []),
+            "source_dsn_display": source_display,
+            "target_endpoint": target_display,
+            "source_dsn": source_dsn_masked,
+            "target_endpoint": os.environ.get("DSQL_HOSTNAME", ""),
         }
 
     def _signal_handler(self, signum, frame):

@@ -108,8 +108,6 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action:
-              - Effect: Allow
-                Action:
                   - s3:PutObject
                 Resource: !Sub ${CDCArchiveBucket.Arn}/*
               - Effect: Allow
@@ -585,7 +583,7 @@ Resources:
                       results['source_error'] = str(e)[:200]
               # Test target
               if target_dsn:
-                  cmd = f'python3.11 -c "import psycopg2, boto3; c=boto3.client(\'dsql\',region_name=\'us-east-1\'); t=c.generate_db_connect_admin_auth_token(Hostname=\'{target_dsn}\',Region=\'us-east-1\',ExpiresIn=900); conn=psycopg2.connect(host=\'{target_dsn}\',port=5432,dbname=\'postgres\',user=\'admin\',password=t,sslmode=\'require\'); cur=conn.cursor(); cur.execute(\'SELECT 1\'); print(\'DSQL connected\'); conn.close()"'
+                  cmd = f'python3.11 -c "import psycopg2, boto3; c=boto3.client(\'dsql\',region_name=\'${AWS::Region}\'); t=c.generate_db_connect_admin_auth_token(Hostname=\'{target_dsn}\',Region=\'${AWS::Region}\',ExpiresIn=900); conn=psycopg2.connect(host=\'{target_dsn}\',port=5432,dbname=\'postgres\',user=\'admin\',password=t,sslmode=\'require\'); cur=conn.cursor(); cur.execute(\'SELECT 1\'); print(\'DSQL connected\'); conn.close()"'
                   try:
                       r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]}, TimeoutSeconds=30)
                       t.sleep(5)
@@ -862,3 +860,7 @@ Outputs:
   CDCHealthEndpoint:
     Value: !Sub http://${CDCInstance.PublicIp}:8080/health
     Description: CDC service health check endpoint
+
+  CloudWatchLogsURL:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/$252Fec2$252F${AWS::StackName}-cdc
+    Description: CloudWatch Logs for CDC service

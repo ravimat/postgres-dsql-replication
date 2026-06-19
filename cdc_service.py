@@ -1984,10 +1984,10 @@ class CDCService:
             try:
                 state = self._control_manager.get_state()
                 if state == "stopped":
-                    logger.info("Control watcher: stopped — initiating shutdown")
-                    self._consumer.stop()
-                    self._shutdown_event.set()
-                    break
+                    if self._is_streaming:
+                        logger.info("Control watcher: stopped — stopping consumer")
+                        self._consumer.stop()
+                        self._is_streaming = False
                 elif state == "paused":
                     if self._is_streaming:
                         logger.info("Control watcher: paused — stopping consumer")

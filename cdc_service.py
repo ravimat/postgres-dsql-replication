@@ -2071,6 +2071,17 @@ class CDCService:
 
 def main():
     """Main entry point for the CDC service."""
+    # Load .env file if it exists (ensures env vars are set regardless of systemd)
+    env_file = os.environ.get("ENV_FILE", "/opt/cdc/.env")
+    if os.path.exists(env_file):
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    val = val.strip('"').strip("'")
+                    os.environ.setdefault(key, val)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s [%(threadName)s]: %(message)s",

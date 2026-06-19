@@ -141,6 +141,16 @@ const CDC = (() => {
             if (health.tables && health.tables.length) {
                 updateTableStatus(health.tables);
             }
+            // Show table validation warning if present
+            const warningEl = document.getElementById('tableWarning');
+            if (warningEl) {
+                if (health.table_warning) {
+                    warningEl.style.display = 'block';
+                    warningEl.textContent = '⚠️ ' + health.table_warning;
+                } else {
+                    warningEl.style.display = 'none';
+                }
+            }
         }
 
         // Always fetch load test table stats (independent of main service)

@@ -2044,6 +2044,8 @@ class CDCService:
         # Only check if control state is 'running' (skip in stopped/paused)
         if self._control_manager.get_state() != "running":
             logger.info("Pre-flight check skipped (control state: %s)", self._control_manager.get_state())
+            # Still validate tables even in stopped state (for display)
+            self._validate_source_tables()
             return
 
         # Check source
@@ -2063,6 +2065,38 @@ class CDCService:
             logger.info("Pre-flight: Target DSQL reachable")
         except Exception as e:
             logger.warning(f"Pre-flight: Target DSQL unreachable: {e}")
+
+        # Validate configured tables exist on source
+        self._validate_source_tables()
+
+    def _validate_source_tables(self):
+        """Check if configured table rules match any actual tables on source.
+        Stores result in self._table_validation_warning for health endpoint."""
+        self._table_validation_warning = None
+        configured = self._rule_engine.configured_tables
+        if not configured or any('%' in t for t in configured):
+            return  # Wildcards — can't validate upfront
+        if not self.config.source_dsn:
+            return
+        try:
+            conn = psycopg2.connect(self.config.source_dsn, connect_timeout=10)
+            cur = conn.cursor()
+            # Get all actual table names from source
+            cur.execute("SELECT schemaname || '.' || tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')")
+            source_tables = {row[0] for row in cur.fetchall()}
+            conn.close()
+            # Check which configured tables exist
+            missing = [t for t in configured if t not in source_tables]
+            if missing and len(missing) == len(configured):
+                self._table_validation_warning = f"No matching tables found on source. Configured: {', '.join(configured)}. Replication will pick up new tables when created."
+                logger.warning(f"Pre-flight: {self._table_validation_warning}")
+            elif missing:
+                self._table_validation_warning = f"Some tables not found on source: {', '.join(missing)}. They will be picked up if created later."
+                logger.info(f"Pre-flight: {self._table_validation_warning}")
+            else:
+                logger.info(f"Pre-flight: All configured tables found on source: {', '.join(configured)}")
+        except Exception as e:
+            logger.warning(f"Pre-flight: Could not validate source tables: {e}")
 
     def _start_health_server(self):
         HealthCheckHandler.service = self
@@ -2100,6 +2134,7 @@ class CDCService:
             "table_rules_count": self._rule_engine.rules_count,
             "table_rules_summary": self._rule_engine.rules_summary,
             "tables": self._merge_tables_with_rules(snapshot.get("tables", [])),
+            "table_warning": getattr(self, '_table_validation_warning', None),
             "source_dsn_display": source_display,
             "target_endpoint": target_display,
             "source_dsn": source_dsn_raw,

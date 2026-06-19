@@ -367,6 +367,23 @@ class TableRuleEngine:
             return "ALL"
         return f"{len(self._include_rules)} include, {len(self._exclude_rules)} exclude"
 
+    @property
+    def configured_tables(self) -> list:
+        """Return list of configured table names from rules file for display."""
+        tables = []
+        try:
+            if os.path.exists(self._rules_file):
+                with open(self._rules_file) as f:
+                    data = json.load(f)
+                for rule in data.get("rules", []):
+                    if rule.get("rule-type") == "selection" and rule.get("rule-action") == "include":
+                        locator = rule.get("object-locator", {})
+                        schema = locator.get("schema-name", "public")
+                        table = locator.get("table-name", "%")
+                        tables.append(f"{schema}.{table}")
+        except: pass
+        return tables
+
 
 # ---------------------------------------------------------------------------
 # Replication Control Manager
@@ -2082,7 +2099,7 @@ class CDCService:
             "control_state": self._control_manager.get_state(),
             "table_rules_count": self._rule_engine.rules_count,
             "table_rules_summary": self._rule_engine.rules_summary,
-            "tables": snapshot.get("tables", []),
+            "tables": self._merge_tables_with_rules(snapshot.get("tables", [])),
             "source_dsn_display": source_display,
             "target_endpoint": target_display,
             "source_dsn": source_dsn_raw,
@@ -2090,6 +2107,23 @@ class CDCService:
             "batch_size": self.config.batch_size,
             "slot_name": self.config.slot_name,
         }
+
+    def _merge_tables_with_rules(self, active_tables: list) -> list:
+        """Merge active table stats with configured rules — show idle tables too."""
+        active_names = {t.get("name") for t in active_tables}
+        merged = list(active_tables)
+        # Add configured tables that don't have activity yet
+        for table_name in self._rule_engine.configured_tables:
+            if table_name not in active_names and '%' not in table_name:
+                merged.append({
+                    "name": table_name,
+                    "eventsApplied": 0,
+                    "errors": 0,
+                    "operations": {},
+                    "lastEvent": None,
+                    "status": "idle"
+                })
+        return merged
 
     def _signal_handler(self, signum, frame):
         sig_name = signal.Signals(signum).name

@@ -662,7 +662,7 @@ const CDC = (() => {
             });
             const data = await resp.json();
             if (data.status === 'applied') {
-                alert('Table mapping rules applied! (' + (data.rules_count || '?') + ' rules). Service restarting...');
+                alert('Table mapping rules applied! (' + (data.rules_count || '?') + ' rules). Changes take effect immediately.');
                 loadTableMapping();
             } else {
                 alert('Error: ' + (data.error || JSON.stringify(data)));

@@ -54,6 +54,28 @@ import psycopg2
 import psycopg2.extras
 
 
+def resolve_source_dsn(value: str) -> str:
+    """
+    Resolve SOURCE_DSN value:
+    - If it looks like a Secrets Manager ARN, fetch the secret JSON and build DSN.
+    - Otherwise, treat it as a raw DSN string.
+    """
+    if not value:
+        return ""
+    if value.startswith("arn:aws:secretsmanager"):
+        region = value.split(":")[3]
+        client = boto3.client("secretsmanager", region_name=region)
+        resp = client.get_secret_value(SecretId=value)
+        secret=[REDACTED_PASSWORD]
+        host = secret.get("host", "")
+        port = secret.get("port", 5432)
+        dbname = secret.get("dbname", secret.get("database", "postgres"))
+        username = secret.get("username", "postgres")
+        password=[REDACTED_PASSWORD] "")
+        return f"host={host} port={port} dbname={dbname} user={username} password=[REDACTED_PASSWORD] sslmode=require"
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Schema Definition
 # ---------------------------------------------------------------------------
@@ -283,7 +305,7 @@ class OrderTestConfig:
     @classmethod
     def from_args(cls, args) -> "OrderTestConfig":
         return cls(
-            source_dsn=args.source_dsn or os.environ.get("SOURCE_DSN", ""),
+            source_dsn=resolve_source_dsn(args.source_dsn or os.environ.get("SOURCE_DSN", "")),
             target_dsn=args.target_dsn or os.environ.get("TARGET_DSN", ""),
             duration_seconds=args.duration,
             sample_orders_per_sec=args.orders_per_sec,

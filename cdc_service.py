@@ -221,7 +221,33 @@ class CDCConfig:
         tables_str = os.environ.get("TABLES", "")
         tables = [t.strip() for t in tables_str.split(",") if t.strip()] if tables_str else []
         return cls(
-            source_dsn=os.environ["SOURCE_DSN"],
+def resolve_source_dsn(value: str) -> str:
+    """
+    Resolve SOURCE_DSN value:
+    - If it looks like a Secrets Manager ARN (starts with 'arn:aws:secretsmanager'),
+      fetch the secret JSON and build a DSN string.
+    - Otherwise, treat it as a raw DSN string.
+    """
+    if not value:
+        return ""
+    if value.startswith("arn:aws:secretsmanager"):
+        import boto3
+        region = value.split(":")[3]  # extract region from ARN
+        client = boto3.client("secretsmanager", region_name=region)
+        resp = client.get_secret_value(SecretId=value)
+        secret = json.loads(resp["SecretString"])
+        host = secret.get("host", "")
+        port = secret.get("port", 5432)
+        dbname = secret.get("dbname", secret.get("database", "postgres"))
+        username = secret.get("username", "postgres")
+        password = secret.get("password", "")
+        return f"host={host} port={port} dbname={dbname} user={username} password={password} sslmode=require"
+    return value
+
+
+        source_dsn_raw = os.environ.get("SOURCE_DSN", "")
+        source_dsn = resolve_source_dsn(source_dsn_raw)
+            source_dsn=source_dsn,
             target_dsn=os.environ["TARGET_DSN"],
             slot_name=os.environ.get("SLOT_NAME", "dsql_cdc_slot"),
             publication_name=os.environ.get("PUBLICATION_NAME", "dsql_cdc_pub"),
@@ -1911,9 +1937,12 @@ class CDCService:
                 state = self._control_manager.get_state()
                 
                 if state == "stopped":
-                    logger.info("Control state: stopped — shutting down")
-                    self._shutdown_event.set()
-                    break
+                    if self._is_streaming:
+                        logger.info("Control state: stopped — stopping consumption")
+                        self._consumer.stop()
+                        self._is_streaming = False
+                    time.sleep(3)
+                    continue
                 elif state == "paused":
                     if self._is_streaming:
                         logger.info("Control state: paused — stopping consumption")

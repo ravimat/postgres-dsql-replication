@@ -108,9 +108,9 @@
                 <div class="card">
                     <h3>Database Connections</h3>
                     <div class="form-group">
-                        <label for="cfgSourceDSN">Source PostgreSQL DSN</label>
-                        <input type="text" id="cfgSourceDSN" class="form-input" placeholder="host=xxx port=5432 dbname=postgres user=xxx password=xxx sslmode=require">
-                        <span class="form-help">PostgreSQL source connection string</span>
+                        <label for="cfgSourceDSN">Source PostgreSQL (Secret ARN or DSN)</label>
+                        <input type="text" id="cfgSourceDSN" class="form-input" placeholder="arn:aws:secretsmanager:us-east-1:123456789:secret=my-pg-secret">
+                        <span class="form-help">Secrets Manager ARN (recommended) or raw DSN string</span>
                     </div>
                     <div class="form-group">
                         <label for="cfgTargetDSN">Target Aurora DSQL Endpoint</label>

@@ -105,6 +105,7 @@ Resources:
                 Action:
                   - cloudwatch:PutMetricData
                   - dsql:DbConnectAdmin
+                  - secretsmanager:GetSecretValue
                 Resource: '*'
               - Effect: Allow
                 Action:

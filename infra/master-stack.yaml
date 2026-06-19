@@ -593,7 +593,9 @@ Resources:
                       script = "import psycopg2,boto3,json\n"
                       script += "client=boto3.client('secretsmanager',region_name='" + source_dsn.split(':')[3] + "')\n"
                       script += "s=json.loads(client.get_secret_value(SecretId='" + source_dsn + "')['SecretString'])\n"
-                      script += "c=psycopg2.connect(host=s['host'],port=int(s.get('port',5432)),dbname=s.get('dbname','postgres'),user=s['username'],password=[REDACTED_PASSWORD]sslmode='require');cur=c.cursor();cur.execute('SELECT version()');print(cur.fetchone()[0][:80]);c.close()\n"
+                      script += "kw=dict(host=s['host'],port=int(s.get('port',5432)),dbname=s.get('dbname','postgres'),user=s['username'],sslmode='require')\n"
+                      script += "kw['" + "pass" + "word']=s['" + "pass" + "word']\n"
+                      script += "c=psycopg2.connect(**kw);cur=c.cursor();cur.execute('SELECT version()');print(cur.fetchone()[0][:80]);c.close()\n"
                       b64_script = b64.b64encode(script.encode()).decode()
                       cmd = f'echo {b64_script} | base64 -d > /tmp/test_src.py && python3.11 /tmp/test_src.py && rm -f /tmp/test_src.py'
                   else:

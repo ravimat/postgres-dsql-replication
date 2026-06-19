@@ -1000,6 +1000,7 @@ class SampleCDCConsumer:
 
     def _poll_loop(self):
         """Poll the replication slot every 1 second and apply changes to DSQL."""
+        poll_count = 0
         while self._running:
             try:
                 with psycopg2.connect(self._source_dsn) as conn:
@@ -1017,6 +1018,9 @@ class SampleCDCConsumer:
             except Exception as e:
                 if self._running:
                     print(f"  SampleCDCConsumer poll error: {e}")
+            poll_count += 1
+            if poll_count % 5 == 0:
+                self._write_stats_file()
             time.sleep(1)
 
     def _parse_changes(self, rows):

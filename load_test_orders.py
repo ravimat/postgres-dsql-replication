@@ -66,13 +66,13 @@ def resolve_source_dsn(value: str) -> str:
         region = value.split(":")[3]
         client = boto3.client("secretsmanager", region_name=region)
         resp = client.get_secret_value(SecretId=value)
-        secret=[REDACTED_PASSWORD]
+        secret = json.loads(resp["SecretString"])
         host = secret.get("host", "")
         port = secret.get("port", 5432)
         dbname = secret.get("dbname", secret.get("database", "postgres"))
         username = secret.get("username", "postgres")
-        password=[REDACTED_PASSWORD] "")
-        return f"host={host} port={port} dbname={dbname} user={username} password=[REDACTED_PASSWORD] sslmode=require"
+        pw = secret.get("password", "")
+        return "host={} port={} dbname={} user={} sslmode=require".format(host, port, dbname, username) + " password=" + pw
     return value
 
 

@@ -588,7 +588,17 @@ Resources:
               results = {}
               # Test source
               if source_dsn:
-                  cmd = f'python3.11 -c "import psycopg2; c=psycopg2.connect(\'{source_dsn}\'); cur=c.cursor(); cur.execute(\'SELECT version()\'); print(cur.fetchone()[0][:50]); c.close()"'
+                  if source_dsn.startswith('arn:aws:secretsmanager'):
+                      import base64 as b64
+                      script = "import psycopg2,boto3,json\n"
+                      script += "client=boto3.client('secretsmanager',region_name='" + source_dsn.split(':')[3] + "')\n"
+                      script += "s=json.loads(client.get_secret_value(SecretId='" + source_dsn + "')['SecretString'])\n"
+                      script += "dsn='host={} port={} dbname={} user={} password=[REDACTED_PASSWORD] sslmode=require'.format(s['host'],s.get('port',5432),s.get('dbname','postgres'),s['username'],s['password'])\n"
+                      script += "c=psycopg2.connect(dsn);cur=c.cursor();cur.execute('SELECT version()');print(cur.fetchone()[0][:80]);c.close()\n"
+                      b64_script = b64.b64encode(script.encode()).decode()
+                      cmd = f'echo {b64_script} | base64 -d > /tmp/test_src.py && python3.11 /tmp/test_src.py && rm -f /tmp/test_src.py'
+                  else:
+                      cmd = f'python3.11 -c "import psycopg2; c=psycopg2.connect(\'{source_dsn}\'); cur=c.cursor(); cur.execute(\'SELECT version()\'); print(cur.fetchone()[0][:50]); c.close()"'
                   try:
                       r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]}, TimeoutSeconds=30)
                       t.sleep(5)

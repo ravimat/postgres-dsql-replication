@@ -430,7 +430,10 @@ const CDC = (() => {
                 body: JSON.stringify(config),
             });
 
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP ${response.status}`);
+            }
             const result = await response.json();
             loadTestCommandId = result.command_id;
             appendLog(`Test started. Command ID: ${loadTestCommandId}`, 'success');
@@ -597,7 +600,9 @@ const CDC = (() => {
                 body: JSON.stringify({state: newState}),
             });
             const data = await resp.json();
-            if (data.status === 'ok' || data.state) {
+            if (!resp.ok) {
+                alert('Error: ' + (data.error || 'Request failed'));
+            } else if (data.status === 'ok' || data.state) {
                 updateControlBadge(newState);
                 alert('Replication state changed to: ' + newState);
             } else {

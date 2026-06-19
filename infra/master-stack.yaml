@@ -526,6 +526,7 @@ Resources:
               return response(200, {'rules': []})
 
           def post_control(body):
+              import time as t
               ssm = boto3.client('ssm')
               instance_id = os.environ['CDC_INSTANCE_ID']
               action = body.get('action', body.get('state', ''))
@@ -533,6 +534,18 @@ Resources:
               state = state_map.get(action, action)
               if state not in ('running', 'paused', 'stopped'):
                   return response(400, {'error': f'Invalid: {action}'})
+              # Check connectivity before starting replication
+              if state == 'running':
+                  try:
+                      r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': ['cat /opt/cdc/connectivity_status.json 2>/dev/null || echo "{}"']}, TimeoutSeconds=30)
+                      t.sleep(2)
+                      inv = ssm.get_command_invocation(CommandId=r['Command']['CommandId'], InstanceId=instance_id)
+                      if inv['Status'] == 'Success':
+                          status = json.loads(inv.get('StandardOutputContent', '{}'))
+                          if not status.get('source_ok') or not status.get('target_ok'):
+                              return response(400, {'error': 'Please run Test Connectivity (Step 1) and ensure both source and target pass before starting replication.'})
+                  except:
+                      return response(400, {'error': 'Please run Test Connectivity (Step 1) before starting replication.'})
               cmd = 'echo \'{"state": "' + state + '"}\' > /opt/cdc/control.json'
               if state == 'running': cmd += ' && systemctl start cdc-service 2>/dev/null || true'
               ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]})
@@ -542,6 +555,19 @@ Resources:
               import time as t
               ssm = boto3.client('ssm')
               instance_id = os.environ['CDC_INSTANCE_ID']
+              # Check connectivity status before starting
+              try:
+                  r = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': ['cat /opt/cdc/connectivity_status.json 2>/dev/null || echo "{}"']}, TimeoutSeconds=30)
+                  t.sleep(2)
+                  inv = ssm.get_command_invocation(CommandId=r['Command']['CommandId'], InstanceId=instance_id)
+                  if inv['Status'] == 'Success':
+                      status = json.loads(inv.get('StandardOutputContent', '{}'))
+                      if not status.get('source_ok') or not status.get('target_ok'):
+                          return response(400, {'error': 'Please run Test Connectivity first (Step 1) and ensure both source and target pass before starting a load test.'})
+                  else:
+                      return response(400, {'error': 'Please run Test Connectivity first (Step 1) and ensure both source and target pass before starting a load test.'})
+              except Exception as e:
+                  return response(400, {'error': 'Please run Test Connectivity first (Step 1) before starting a load test.'})
               duration = int(body.get('duration', 300))
               ops = int(body.get('orders_per_sec', 20))
               threads = int(body.get('threads', 4))
@@ -661,6 +687,14 @@ Resources:
                   except: pass
                   logs.put_log_events(logGroupName=log_group, logStreamName=log_stream, logEvents=[{'timestamp': int(t2.time()*1000), 'message': json.dumps(results)}])
               except: pass
+              # Save connectivity status to EC2 for pre-start validation
+              if results.get('source_ok') and results.get('target_ok'):
+                  try:
+                      import time as t3
+                      status_json = json.dumps({'source_ok': True, 'target_ok': True, 'tested_at': int(t3.time())})
+                      save_cmd = f"echo '{status_json}' > /opt/cdc/connectivity_status.json"
+                      ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [save_cmd]}, TimeoutSeconds=30)
+                  except: pass
               return response(200, results)
 
           def post_dsn(body):

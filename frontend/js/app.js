@@ -143,6 +143,9 @@ const CDC = (() => {
             }
         }
 
+        // Always fetch load test table stats (independent of main service)
+        fetchLoadTestTables();
+
         document.getElementById('lastUpdated').textContent =
             `Last updated: ${new Date().toLocaleTimeString()}`;
     }

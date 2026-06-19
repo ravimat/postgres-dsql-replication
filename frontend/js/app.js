@@ -18,7 +18,7 @@ const CDC = (() => {
     function init() {
         setupNavigation();
         loadConnectionSettings();
-        initCharts();
+        try { initCharts(); } catch(e) { console.warn('Charts not available:', e.message); }
         refresh();
         startAutoRefresh();
         loadTableMapping();
@@ -166,6 +166,7 @@ const CDC = (() => {
 
     // ─── Chart Updates ────────────────────────────────────────────────
     function updateCharts(metrics) {
+        if (!charts.tps) return;  // Charts not initialized
         const timeseries = metrics.timeseries || {};
 
         if (timeseries.EventsAppliedPerSecond) {

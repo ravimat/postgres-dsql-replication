@@ -2016,7 +2016,7 @@ class CDCService:
         import re
         source_display = re.sub(r'password=\S+', 'password=****', self.config.source_dsn) if self.config.source_dsn else '--'
         target_display = os.environ.get('DSQL_HOSTNAME', '--')
-        source_dsn_masked = re.sub(r'password=\S+', 'password=***', self.config.source_dsn) if self.config.source_dsn else ''
+        source_dsn_raw = os.environ.get("SOURCE_DSN", "")
         return {
             "healthy": self._is_streaming and lag_bytes < self.config.max_lag_bytes,
             "streaming": self._is_streaming,

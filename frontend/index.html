@@ -238,7 +238,8 @@
 
             <!-- Load Test Info -->
             <div class="card info-banner">
-                <h3>ℹ️ How Load Testing Works</h3>
+                <details>
+                    <summary><strong>ℹ️ How Load Testing Works</strong></summary>
                 <div class="info-banner-body">
                     <p><strong>What it does:</strong></p>
                     <ul>
@@ -254,6 +255,7 @@
                         <li>✅ Uses its own publication — zero interference with your live CDC pipeline</li>
                     </ul>
                 </div>
+                </details>
             </div>
 
             <div class="config-grid">
@@ -285,19 +287,7 @@
                     </div>
                 </div>
 
-                <div class="card">
-                    <h3>Live Results</h3>
-                    <div class="kpi-row kpi-row-sm">
-                        <div class="kpi-card"><span class="kpi-label">Orders</span><span class="kpi-value" id="lt-orders">--</span></div>
-                        <div class="kpi-card"><span class="kpi-label">DML Ops</span><span class="kpi-value" id="lt-dml">--</span></div>
-                        <div class="kpi-card"><span class="kpi-label">TPS</span><span class="kpi-value" id="lt-tps">--</span></div>
-                        <div class="kpi-card"><span class="kpi-label">Elapsed</span><span class="kpi-value" id="lt-elapsed">--</span></div>
-                        <div class="kpi-card"><span class="kpi-label">Errors</span><span class="kpi-value" id="lt-errors">--</span></div>
-                    </div>
-                    <div id="loadtestProgress" class="progress-bar" style="display:none;">
-                        <div class="progress-fill"></div>
-                    </div>
-                </div>
+
 
                 <div class="card card-wide">
                     <h3>Output Log</h3>

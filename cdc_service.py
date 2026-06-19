@@ -1213,6 +1213,7 @@ class StreamingWALConsumer:
         """Start the streaming replication consumer."""
         self._running = True
         self._last_lsn = start_lsn
+        self._confirmed_flush_lsn = 0  # Updated by batch processor after successful write
         self._connect_and_stream()
 
     def stop(self):
@@ -1357,8 +1358,9 @@ class StreamingWALConsumer:
                 self.metrics.increment("events_consumed", len(events))
                 self._last_lsn = str(msg.data_start)
 
-            # Send feedback to source
-            msg.cursor.send_feedback(flush_lsn=msg.data_start)
+            # Send feedback only for the last confirmed (written to DSQL) LSN — zero data loss
+            if self._confirmed_flush_lsn:
+                msg.cursor.send_feedback(flush_lsn=self._confirmed_flush_lsn)
 
         except StopIteration:
             raise
@@ -1465,13 +1467,24 @@ class BatchProcessor:
             self._archiver.archive_batch(batch)
             self.metrics.increment("s3_archives")
 
-        # 4. Save checkpoint
+        # 4. Save checkpoint — only advance to the MINIMUM of successful events' LSN
         if success_count > 0:
-            self._checkpoint.save_checkpoint(batch_lsn)
-            self._last_confirmed_lsn = batch_lsn
+            # If there are failures, only confirm up to before the first failed event
+            if failed_events:
+                # Find the lowest failed LSN — checkpoint should NOT advance past it
+                safe_lsn = min(e.lsn for e in failed_events) - 1 if failed_events else batch_lsn
+                if safe_lsn > 0:
+                    self._checkpoint.save_checkpoint(safe_lsn)
+                    self._last_confirmed_lsn = safe_lsn
+            else:
+                self._checkpoint.save_checkpoint(batch_lsn)
+                self._last_confirmed_lsn = batch_lsn
             self.metrics.increment("checkpoints_saved")
 
         self.metrics.increment("batches_processed")
+        # Update consumer's confirmed flush LSN for WAL feedback
+        if hasattr(self, '_consumer_ref') and self._consumer_ref and self._last_confirmed_lsn:
+            self._consumer_ref._confirmed_flush_lsn = self._last_confirmed_lsn
 
         elapsed = time.time() - start_time
         events_per_sec = len(batch) / elapsed if elapsed > 0 else 0
@@ -1849,6 +1862,7 @@ class CDCService:
         self._event_queue = Queue(maxsize=config.batch_size * 10)
         self._consumer = StreamingWALConsumer(config, self._event_queue, self.metrics)
         self._processor = BatchProcessor(config, self._event_queue, self.metrics)
+        self._processor._consumer_ref = None  # Set when consumer starts
         self._lag_monitor = LagMonitor(config, self.metrics)
         self._threads: List[threading.Thread] = []
         self._shutdown_event = threading.Event()
@@ -1876,6 +1890,9 @@ class CDCService:
         # Get starting LSN from checkpoint
         start_lsn = self._processor.get_last_confirmed_lsn()
         logger.info(f"Resuming from LSN: {start_lsn or 'beginning'}")
+
+        # Pre-flight connectivity check (both source and target must be reachable)
+        self._preflight_check()
 
         # Start health check server
         self._start_health_server()
@@ -1932,24 +1949,32 @@ class CDCService:
                 
                 if state == "stopped":
                     if self._is_streaming:
-                        logger.info("Control state: stopped — stopping consumption")
+                        logger.info("=" * 70)
+                        logger.info("REPLICATION SESSION STOPPED: %s", datetime.now(timezone.utc).isoformat())
+                        logger.info("=" * 70)
                         self._consumer.stop()
                         self._is_streaming = False
                     time.sleep(3)
                     continue
                 elif state == "paused":
                     if self._is_streaming:
-                        logger.info("Control state: paused — stopping consumption")
+                        logger.info("=" * 70)
+                        logger.info("REPLICATION SESSION PAUSED: %s", datetime.now(timezone.utc).isoformat())
+                        logger.info("=" * 70)
                         self._consumer.stop()
                         self._is_streaming = False
                     time.sleep(3)
                     continue
                 else:  # running
                     if not self._is_streaming:
-                        logger.info("Control state: running — (re)starting consumption")
+                        logger.info("=" * 70)
+                        logger.info("REPLICATION SESSION STARTED: %s", datetime.now(timezone.utc).isoformat())
+                        logger.info("=" * 70)
                         # Get latest checkpoint for resume
                         resume_lsn = self._processor.get_last_confirmed_lsn() or start_lsn
                         self._is_streaming = True
+                        self._consumer._confirmed_flush_lsn = self._processor._last_confirmed_lsn or 0
+                        self._processor._consumer_ref = self._consumer
                         self._consumer.start(resume_lsn)
                         # If start() returns normally, it means connection was lost
                         self._is_streaming = False
@@ -1985,17 +2010,42 @@ class CDCService:
                 state = self._control_manager.get_state()
                 if state == "stopped":
                     if self._is_streaming:
-                        logger.info("Control watcher: stopped — stopping consumer")
+                        logger.info("── Control watcher: STOPPED [%s] ──", datetime.now(timezone.utc).isoformat())
                         self._consumer.stop()
                         self._is_streaming = False
                 elif state == "paused":
                     if self._is_streaming:
-                        logger.info("Control watcher: paused — stopping consumer")
+                        logger.info("── Control watcher: PAUSED [%s] ──", datetime.now(timezone.utc).isoformat())
                         self._consumer.stop()
                         self._is_streaming = False
             except Exception as e:
                 logger.warning(f"Control watcher error: {e}")
             time.sleep(2)
+
+    def _preflight_check(self):
+        """Verify source and target connectivity before starting replication."""
+        # Only check if control state is 'running' (skip in stopped/paused)
+        if self._control_manager.get_state() != "running":
+            logger.info("Pre-flight check skipped (control state: %s)", self._control_manager.get_state())
+            return
+
+        # Check source
+        if self.config.source_dsn:
+            try:
+                conn = psycopg2.connect(self.config.source_dsn, connect_timeout=10)
+                conn.close()
+                logger.info("Pre-flight: Source PostgreSQL reachable")
+            except Exception as e:
+                logger.warning(f"Pre-flight: Source unreachable: {e}")
+
+        # Check target (DSQL)
+        try:
+            dsn = self._processor._writer._token_manager.get_dsn()
+            conn = psycopg2.connect(dsn, connect_timeout=10)
+            conn.close()
+            logger.info("Pre-flight: Target DSQL reachable")
+        except Exception as e:
+            logger.warning(f"Pre-flight: Target DSQL unreachable: {e}")
 
     def _start_health_server(self):
         HealthCheckHandler.service = self

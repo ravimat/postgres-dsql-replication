@@ -1160,6 +1160,11 @@ Examples:
         print("Error: --source-dsn required (or set SOURCE_DSN env var)")
         sys.exit(1)
 
+    print("=" * 70)
+    print(f"LOAD TEST SESSION STARTED: {datetime.now(timezone.utc).isoformat()}")
+    print(f"  Duration: {config.duration_seconds}s | Orders/sec: {config.sample_orders_per_sec} | Threads: {config.threads}")
+    print("=" * 70)
+
     metrics = TestMetrics()
     test = OrderSystemLoadTest(config, metrics)
 

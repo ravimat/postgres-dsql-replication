@@ -385,6 +385,16 @@ body {
     margin-bottom: 4px;
 }
 
+.info-banner details summary {
+    cursor: pointer;
+    padding: var(--spacing-lg);
+    font-size: var(--font-size-lg);
+}
+
+.info-banner details[open] summary {
+    border-bottom: 1px solid var(--border-color);
+}
+
 .card-header {
     padding: var(--spacing-lg);
     border-bottom: 1px solid var(--border-color);

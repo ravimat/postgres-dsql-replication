@@ -414,8 +414,10 @@ const CDC = (() => {
         // Update UI
         document.getElementById('btnStartTest').style.display = 'none';
         document.getElementById('btnStopTest').style.display = 'inline-flex';
-        document.getElementById('loadtestProgress').style.display = 'block';
-        document.getElementById('loadtestResults').style.display = 'none';
+        const progressEl = document.getElementById('loadtestProgress');
+        if (progressEl) progressEl.style.display = 'block';
+        const resultsEl = document.getElementById('loadtestResults');
+        if (resultsEl) resultsEl.style.display = 'none';
         document.getElementById('loadtestStatusBadge').innerHTML = '<span class="badge badge-blue">Running</span>';
         clearLoadTestLog();
         appendLog('Starting load test...', 'highlight');
@@ -496,7 +498,8 @@ const CDC = (() => {
     }
 
     function showLoadTestResults(results) {
-        document.getElementById('loadtestResults').style.display = 'block';
+        const el = document.getElementById('loadtestResults');
+        if (el) el.style.display = 'block';
         const tbody = document.getElementById('ltIntegrityBody');
 
         if (results.integrity) {

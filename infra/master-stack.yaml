@@ -502,6 +502,8 @@ Resources:
               rules = body.get('rules', [])
               count = sum(1 for r in rules if r.get('rule-type') == 'selection')
               b64 = base64.b64encode(json.dumps(body, indent=2).encode()).decode()
+              cmd = f'echo {b64} | base64 -d > /opt/cdc/table_rules.json'
+              cmd = f'echo {b64} | base64 -d > /opt/cdc/table_rules.json'
               ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]})
               return response(200, {'status': 'applied', 'rules_count': count})
 

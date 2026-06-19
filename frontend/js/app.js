@@ -701,7 +701,25 @@ const CDC = (() => {
         reader.readAsText(input.files[0]);
     }
 
-    // ─── Database Connection Management ───────────────────────────────
+
+    function friendlyError(raw) {
+        if (!raw) return 'Unknown error';
+        const lower = raw.toLowerCase();
+        if (lower.includes('could not connect') || lower.includes('connection refused') || lower.includes('timeout'))
+            return 'Database unreachable — check if the instance is running and network/security groups allow access.';
+        if (lower.includes('password authentication failed'))
+            return 'Authentication failed — check username/password in your Secrets Manager secret.';
+        if (lower.includes('no pg_hba.conf entry'))
+            return 'Connection rejected by server — SSL may be required or IP not allowed.';
+        if (lower.includes('does not exist'))
+            return 'Database not found — check the dbname in your secret.';
+        if (lower.includes('name or service not known') || lower.includes('could not translate host'))
+            return 'Hostname not found — check the host value in your secret.';
+        if (lower.includes('operationalerror') || lower.includes('traceback'))
+            return 'Connection failed — ensure the database is running and credentials are correct.';
+        return raw.length > 150 ? raw.substring(0, 150) + '...' : raw;
+    }
+
     async function testConnectivity() {
         const resultDiv = document.getElementById('connectivityResult');
         const sourceDSN = document.getElementById('cfgSourceDSN').value.trim();
@@ -731,10 +749,10 @@ const CDC = (() => {
             } else {
                 resultDiv.className = 'validation-message error';
                 let msg = '';
-                if (data.source_error) msg += '✗ Source: ' + data.source_error + '\n';
-                if (data.target_error) msg += '✗ Target: ' + data.target_error;
-                if (data.source_ok) msg += '✓ Source: OK\n';
-                if (data.target_ok) msg += '✓ Target: OK';
+                if (data.source_error) msg += '✗ Source: ' + friendlyError(data.source_error) + '\n';
+                if (data.target_error) msg += '✗ Target: ' + friendlyError(data.target_error);
+                if (data.source_ok) msg += '✓ Source: ' + (data.source_version || 'OK') + '\n';
+                if (data.target_ok) msg += '✓ Target: ' + (data.target_status || 'OK');
                 resultDiv.textContent = msg || '✗ Connection failed';
             }
         } catch (e) {

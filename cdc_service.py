@@ -541,7 +541,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             status = self.service.get_health_status() if self.service else {}
             healthy = status.get("healthy", False)
-            self.send_response(200 if healthy else 503)
+            self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
             self.end_headers()

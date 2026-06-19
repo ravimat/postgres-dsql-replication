@@ -476,12 +476,17 @@ Resources:
 
           def get_health_path(path):
               import urllib.request
+              import urllib.error
               try:
                   private_ip = os.environ.get('CDC_PRIVATE_IP', '')
                   port = os.environ.get('CDC_HEALTH_PORT', '8080')
                   url = f'http://{private_ip}:{port}{path}'
                   req = urllib.request.urlopen(url, timeout=5)
                   return response(200, json.loads(req.read().decode()))
+              except urllib.error.HTTPError as he:
+                  body = he.read().decode()
+                  try: return response(200, json.loads(body))
+                  except: return response(200, {'error': str(he), 'raw': body[:200]})
               except Exception as e:
                   return response(200, {'tables': [], 'error': str(e)})
 

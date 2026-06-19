@@ -2035,7 +2035,7 @@ class CDCService:
             "tables": snapshot.get("tables", []),
             "source_dsn_display": source_display,
             "target_endpoint": target_display,
-            "source_dsn": source_dsn_masked,
+            "source_dsn": source_dsn_raw,
             "target_endpoint": os.environ.get("DSQL_HOSTNAME", ""),
             "batch_size": self.config.batch_size,
             "slot_name": self.config.slot_name,

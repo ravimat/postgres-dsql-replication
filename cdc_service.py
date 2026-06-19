@@ -216,39 +216,37 @@ class CDCConfig:
     max_lag_bytes: int = 1_073_741_824  # 1 GB
     reconnect_max_wait: int = 60
 
+    @staticmethod
+    def _resolve_source_dsn(value):
+        """Resolve SOURCE_DSN: Secrets Manager ARN or raw DSN string."""
+        if not value:
+            return ""
+        if value.startswith("arn:aws:secretsmanager"):
+            import boto3
+            import json as _json
+            region = value.split(":")[3]
+            client = boto3.client("secretsmanager", region_name=region)
+            resp = client.get_secret_value(SecretId=value)
+            secret = _json.loads(resp["SecretString"])
+            host = secret.get("host", "")
+            port = secret.get("port", 5432)
+            dbname = secret.get("dbname", secret.get("database", "postgres"))
+            username = secret.get("username", "postgres")
+            pw = secret.get("password", "")
+            return "host={} port={} dbname={} user={} password={} sslmode=require".format(
+                host, port, dbname, username, pw
+            )
+        return value
+
     @classmethod
     def from_env(cls) -> "CDCConfig":
         tables_str = os.environ.get("TABLES", "")
         tables = [t.strip() for t in tables_str.split(",") if t.strip()] if tables_str else []
-        return cls(
-def resolve_source_dsn(value: str) -> str:
-    """
-    Resolve SOURCE_DSN value:
-    - If it looks like a Secrets Manager ARN (starts with 'arn:aws:secretsmanager'),
-      fetch the secret JSON and build a DSN string.
-    - Otherwise, treat it as a raw DSN string.
-    """
-    if not value:
-        return ""
-    if value.startswith("arn:aws:secretsmanager"):
-        import boto3
-        region = value.split(":")[3]  # extract region from ARN
-        client = boto3.client("secretsmanager", region_name=region)
-        resp = client.get_secret_value(SecretId=value)
-        secret = json.loads(resp["SecretString"])
-        host = secret.get("host", "")
-        port = secret.get("port", 5432)
-        dbname = secret.get("dbname", secret.get("database", "postgres"))
-        username = secret.get("username", "postgres")
-        password = secret.get("password", "")
-        return f"host={host} port={port} dbname={dbname} user={username} password={password} sslmode=require"
-    return value
-
-
         source_dsn_raw = os.environ.get("SOURCE_DSN", "")
-        source_dsn = resolve_source_dsn(source_dsn_raw)
+        source_dsn = cls._resolve_source_dsn(source_dsn_raw)
+        return cls(
             source_dsn=source_dsn,
-            target_dsn=os.environ["TARGET_DSN"],
+            target_dsn=os.environ.get("TARGET_DSN", ""),
             slot_name=os.environ.get("SLOT_NAME", "dsql_cdc_slot"),
             publication_name=os.environ.get("PUBLICATION_NAME", "dsql_cdc_pub"),
             decoding_plugin=DecodingPlugin(os.environ.get("DECODING_PLUGIN", "test_decoding")),
@@ -267,10 +265,6 @@ def resolve_source_dsn(value: str) -> str:
             reconnect_max_wait=int(os.environ.get("RECONNECT_MAX_WAIT", "60")),
         )
 
-
-
-# ---------------------------------------------------------------------------
-# Table Rule Engine (DMS-style rules)
 # ---------------------------------------------------------------------------
 
 class TableRuleEngine:

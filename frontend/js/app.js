@@ -26,20 +26,20 @@ const CDC = (() => {
 
     // ─── Navigation ───────────────────────────────────────────────────
     function setupNavigation() {
-        document.querySelectorAll('.nav-link').forEach(link => {
-            link.addEventListener('click', (e) => {
+        document.querySelectorAll('.feature-card').forEach(card => {
+            card.addEventListener('click', (e) => {
                 e.preventDefault();
-                const page = link.dataset.page;
+                const page = card.dataset.page;
                 switchPage(page);
             });
         });
     }
 
     function switchPage(pageName) {
-        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        document.querySelectorAll('.feature-card').forEach(c => c.classList.remove('active'));
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
 
-        const link = document.querySelector(`[data-page="${pageName}"]`);
+        const link = document.querySelector(`.feature-card[data-page="${pageName}"]`);
         const page = document.getElementById(`page-${pageName}`);
 
         if (link) link.classList.add('active');
@@ -810,6 +810,13 @@ document.addEventListener('DOMContentLoaded', CDC.init);
         const info = stateMap[state] || stateMap.running;
         badge.textContent = info.text;
         badge.className = `status-badge ${info.cls}`;
+
+        // Toggle Start/Stop buttons
+        const btnStart = document.getElementById('btnStartReplication');
+        const btnStop = document.getElementById('btnStopReplication');
+        const isRunning = (state === 'running' || state === 'start' || state === 'resume');
+        if (btnStart) btnStart.style.display = isRunning ? 'none' : 'inline-flex';
+        if (btnStop) btnStop.style.display = isRunning ? 'inline-flex' : 'none';
     }
 
     function validateTableMapping() {

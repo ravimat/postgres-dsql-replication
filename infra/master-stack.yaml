@@ -166,7 +166,12 @@ Resources:
           cd /opt/cdc
 
           # Clone the repository
-          git clone https://github.com/${GitHubRepoOwner}/${GitHubRepoName}.git .
+          # Retry git clone (network may not be ready on first boot)
+          for i in 1 2 3 4 5; do
+            git clone https://github.com/${GitHubRepoOwner}/${GitHubRepoName}.git . && break
+            echo "Git clone attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
           git checkout ${GitHubBranch}
 
           # Install Python dependencies

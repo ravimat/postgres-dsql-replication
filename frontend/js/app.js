@@ -746,6 +746,15 @@ const CDC = (() => {
         resultDiv.className = 'validation-message';
         resultDiv.textContent = '⏳ Testing connectivity...';
 
+        // Save DSN first (so the values are persisted on EC2 before testing)
+        try {
+            await fetch(`${CONFIG.apiBaseUrl}/dsn`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({source_dsn: sourceDSN, target_dsn: targetDSN}),
+            });
+        } catch (e) { /* save failed — still proceed with test */ }
+
         try {
             const resp = await fetch(`${CONFIG.apiBaseUrl}/test-connection`, {
                 method: 'POST',

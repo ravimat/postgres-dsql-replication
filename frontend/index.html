@@ -110,9 +110,9 @@
                 <div class="card">
                     <h3>Database Connections</h3>
                     <div class="form-group">
-                        <label for="cfgSourceDSN">Source PostgreSQL (Secret ARN or DSN)</label>
-                        <input type="text" id="cfgSourceDSN" class="form-input" placeholder="arn:aws:secretsmanager:us-east-1:123456789:secret=my-pg-secret">
-                        <span class="form-help">Secrets Manager ARN (recommended) or raw DSN string</span>
+                        <label for="cfgSourceDSN">Source PostgreSQL (Secret ARN or DB String)</label>
+                        <input type="text" id="cfgSourceDSN" class="form-input" placeholder="arn:aws:secretsmanager:... OR host=hostname port=5432 dbname=db user=user sslmode=require">
+                        <span class="form-help">Secrets Manager ARN (recommended) or DB connection string</span>
                     </div>
                     <div class="form-group">
                         <label for="cfgTargetDSN">Target Aurora DSQL Endpoint</label>
@@ -121,7 +121,7 @@
                     </div>
                     <div class="btn-row">
                         <button class="btn btn-secondary" onclick="CDC.testConnectivity()">🔗 Test Connectivity</button>
-                        <button class="btn btn-primary" onclick="CDC.saveDSN()">Save DSN</button>
+                        <button class="btn btn-primary" onclick="CDC.saveDSN()">Save</button>
                     </div>
                     <div id="connectivityResult" class="alert" style="display:none;"></div>
                 </div>

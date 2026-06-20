@@ -54,27 +54,82 @@ A production-ready Change Data Capture (CDC) tool that replicates data from Post
 
 | Resource | Description |
 |----------|-------------|
-| **VPC** | With at least one public subnet (EC2 needs internet for git clone) |
-| **Security Group** | Allow inbound on port 8080 (self-referencing), outbound all |
-| **RDS PostgreSQL 14+** | Source database in the same VPC |
-| **Aurora DSQL Cluster** | Target cluster (any region) |
-| **Secrets Manager Secret** | Source DB credentials in JSON format |
-| **GitHub Repository** | This repo (public, or with access configured) |
+| **VPC** | With at least one public subnet (EC2 needs internet access for git clone) |
+| **Security Group** | Allow inbound port 8080 (self-referencing for Lambda→EC2), outbound all |
+| **RDS PostgreSQL 14+** | Source database in the same VPC, with logical replication enabled |
+| **Aurora DSQL Cluster** | Target cluster (can be in any region) |
+| **Secrets Manager Secret** | Source DB credentials stored in JSON format |
+| **GitHub Repository** | This repo must be public (for EC2 UserData git clone) |
 
-### Source PostgreSQL Configuration
+### Source PostgreSQL Requirements
+
+#### 1. Database Parameters (RDS Parameter Group)
+
+| Parameter | Required Value | Notes |
+|-----------|---------------|-------|
+| `wal_level` | `logical` | Enables logical decoding (requires reboot) |
+| `max_replication_slots` | `≥ 2` | One for CDC, one for load testing |
+| `max_wal_senders` | `≥ 2` | Concurrent WAL streaming connections |
+| `rds.logical_replication` | `1` | RDS-specific: enables logical replication |
+
+#### 2. Database User Permissions
+
+The user in your Secrets Manager secret needs these permissions:
 
 ```sql
--- Required PostgreSQL parameters (RDS Parameter Group):
--- wal_level = logical
--- max_replication_slots >= 2
--- max_wal_senders >= 2
+-- Minimum required permissions for CDC:
+GRANT rds_replication TO your_user;           -- RDS: allows creating replication slots
+-- OR for self-managed PostgreSQL:
+ALTER USER your_user WITH REPLICATION;         -- Allows replication connections
 
--- Create replication slot:
+-- Required on each database being replicated:
+GRANT CONNECT ON DATABASE your_db TO your_user;
+GRANT USAGE ON SCHEMA public TO your_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO your_user;
+
+-- If you need the CDC user to create the replication slot:
+-- (Alternatively, create the slot as a superuser beforehand)
+```
+
+#### 3. Replication Slot (create before starting CDC)
+
+```sql
+-- Create the logical replication slot:
 SELECT pg_create_logical_replication_slot('dsql_cdc_slot', 'test_decoding');
 
--- Set REPLICA IDENTITY on tables you want to replicate:
-ALTER TABLE your_table REPLICA IDENTITY FULL;
+-- Verify it was created:
+SELECT slot_name, plugin, active FROM pg_replication_slots;
 ```
+
+> ⚠️ **Important:** The replication slot starts capturing WAL from the moment it's created. Any changes made BEFORE slot creation are NOT captured. For initial data load, use `pg_dump` separately.
+
+#### 4. Table Requirements (CRITICAL)
+
+Each table you want to replicate **must** have REPLICA IDENTITY configured:
+
+```sql
+-- REQUIRED for UPDATE and DELETE replication:
+ALTER TABLE your_table REPLICA IDENTITY FULL;
+
+-- Check current replica identity:
+SELECT relname, 
+  CASE relreplident 
+    WHEN 'f' THEN 'FULL ✓'
+    WHEN 'd' THEN 'DEFAULT (primary key only)'
+    WHEN 'n' THEN 'NOTHING ✗ (will not replicate UPDATEs/DELETEs)'
+    WHEN 'i' THEN 'INDEX'
+  END as replica_identity
+FROM pg_class 
+WHERE relname IN ('your_table_1', 'your_table_2');
+```
+
+| REPLICA IDENTITY | INSERT | UPDATE | DELETE | Recommendation |
+|-----------------|--------|--------|--------|----------------|
+| `FULL` | ✅ | ✅ | ✅ | **Recommended** — all operations replicate |
+| `DEFAULT` | ✅ | ✅* | ✅* | OK if table has a PRIMARY KEY (*uses PK for identification) |
+| `NOTHING` | ✅ | ❌ | ❌ | **Not recommended** — only INSERTs replicate |
+
+> **Best practice:** Always use `REPLICA IDENTITY FULL` unless you have performance concerns on high-throughput tables with primary keys.
 
 ### Secrets Manager Secret Format
 
@@ -82,18 +137,51 @@ ALTER TABLE your_table REPLICA IDENTITY FULL;
 {
   "username": "postgres",
   "password": "your-password",
-  "host": "your-rds-endpoint.region.rds.amazonaws.com",
+  "host": "your-rds-endpoint.us-east-1.rds.amazonaws.com",
   "port": 5432,
   "dbname": "postgres"
 }
 ```
 
-### Target Aurora DSQL
+The CDC service fetches this secret at startup and builds the connection string automatically. Special characters in passwords are handled correctly.
 
-- Tables must be pre-created on DSQL with matching schema
-- DSQL does NOT support: `SERIAL`, `FOREIGN KEY`, `ARRAY` types, multiple DDL in one transaction
-- Use `INT` with application-generated IDs instead of `SERIAL`
-- Use `JSONB` instead of array types
+### Target Aurora DSQL Requirements
+
+#### Tables Must Pre-Exist
+
+Target tables must be created on DSQL **before** starting replication. The CDC tool does NOT replicate DDL (CREATE TABLE, ALTER TABLE, etc.).
+
+#### DSQL-Compatible Schema
+
+When creating tables on DSQL, adapt your source schema for these restrictions:
+
+| Source (PostgreSQL) | Target (DSQL) | Notes |
+|--------------------|--------------:|-------|
+| `SERIAL` / `BIGSERIAL` | `INT` / `BIGINT` | Use application-generated IDs or UUIDs |
+| `FOREIGN KEY` constraints | Remove them | DSQL doesn't enforce foreign keys |
+| `text[]`, `int[]` (arrays) | `JSONB` | DSQL doesn't support PostgreSQL array types |
+| `CREATE INDEX` | Supported | DSQL supports indexes |
+| Multiple `CREATE TABLE` in one transaction | One per transaction | Each DDL must be in its own connection |
+
+#### Example: Converting DDL for DSQL
+
+```sql
+-- SOURCE (PostgreSQL):
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  customer_id INT REFERENCES customers(id),
+  items text[],
+  status VARCHAR(20) DEFAULT 'pending'
+);
+
+-- TARGET (DSQL) — adapted:
+CREATE TABLE orders (
+  id INT PRIMARY KEY,
+  customer_id INT,
+  items JSONB,
+  status VARCHAR(20) DEFAULT 'pending'
+);
+```
 
 ---
 
@@ -280,16 +368,49 @@ This tool implements **zero data loss guarantees**:
 
 ## Limitations
 
+### DML Only — No DDL Replication
+
+This tool replicates **DML operations only** (INSERT, UPDATE, DELETE). It does NOT replicate DDL (CREATE TABLE, ALTER TABLE, DROP TABLE, CREATE INDEX, etc.).
+
+**What this means for you:**
+
+| Operation | Replicated? | What to do |
+|-----------|:-----------:|-----------|
+| `INSERT INTO table ...` | ✅ Yes | Automatic |
+| `UPDATE table SET ...` | ✅ Yes | Automatic (requires REPLICA IDENTITY) |
+| `DELETE FROM table ...` | ✅ Yes | Automatic (requires REPLICA IDENTITY) |
+| `CREATE TABLE ...` | ❌ No | Create on DSQL manually first |
+| `ALTER TABLE ADD COLUMN ...` | ❌ No | Apply on both source AND target manually |
+| `ALTER TABLE DROP COLUMN ...` | ❌ No | **Stop replication first**, apply on both, restart |
+| `DROP TABLE ...` | ❌ No | Stop replication, remove from rules, drop on target |
+| `CREATE INDEX ...` | ❌ No | Create on DSQL separately |
+| `TRUNCATE ...` | ❌ No | Manual truncate on target if needed |
+
+#### DDL Change Procedure (to avoid breaking replication)
+
+1. **Stop replication** (Step 4 → Stop)
+2. **Apply DDL on target (DSQL) first**
+3. **Apply DDL on source (PostgreSQL)**
+4. **Restart replication** (Step 4 → Start)
+
+> ⚠️ **If you add a column on source without adding it on target:** The CDC service will fail to write rows with the new column. Always update the target schema first.
+
+> ⚠️ **If you drop a column on source without dropping on target:** Replication continues but the dropped column will have NULL values on target.
+
+### Other Limitations
+
 | Limitation | Details |
 |------------|---------|
-| **DDL not replicated** | Schema changes must be applied manually on both source and target |
 | **DSQL type restrictions** | No `SERIAL`, `ARRAY`, `FOREIGN KEY`, multi-DDL transactions |
 | **Single source** | One PostgreSQL source per deployment |
-| **No initial full load** | Only captures changes after slot creation (use pg_dump for initial load) |
-| **test_decoding only** | `pgoutput` support is implemented but less tested |
-| **No schema evolution** | Adding/removing columns requires manual intervention |
-| **Table must pre-exist on target** | Target tables must be created manually before replication |
-| **REPLICA IDENTITY required** | Source tables need `REPLICA IDENTITY FULL` for UPDATE/DELETE replication |
+| **No initial full load** | Only captures changes after slot creation (use `pg_dump` for initial data) |
+| **test_decoding plugin** | `pgoutput` support is implemented but less tested |
+| **No schema evolution** | Adding/removing columns requires stop → manual DDL → restart |
+| **Tables must pre-exist on target** | Target tables must be created manually before replication |
+| **REPLICA IDENTITY required** | Source tables need `REPLICA IDENTITY FULL` for UPDATE/DELETE |
+| **WAL accumulation when stopped** | PostgreSQL retains WAL while replication is paused — monitor disk space |
+| **No LOB/TOAST handling** | Large objects (>1GB fields) may cause issues |
+| **No sequence replication** | Auto-increment counters don't sync — use UUIDs or application-generated IDs |
 
 ---
 

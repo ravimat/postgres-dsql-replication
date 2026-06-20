@@ -70,6 +70,7 @@ from queue import Queue, Full, Empty
 
 import psycopg2
 import psycopg2.extras
+import psycopg2.sql
 import psycopg2.extensions
 import boto3
 
@@ -544,7 +545,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     service = None  # Set by CDCService
 
     def _send_cors_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", os.environ.get("CORS_ORIGIN", "*"))  # Restrict in prod via CORS_ORIGIN env
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
@@ -1532,6 +1533,15 @@ class DSQLWriter:
                 logger.info("TypeMapper enabled (explicit mapping configured)")
             except ImportError:
                 logger.warning("type_mapper.py not found, type mapping disabled")
+
+    @staticmethod
+    def _safe_identifier(name):
+        """Validate and quote a table/schema identifier to prevent SQL injection."""
+        # Only allow alphanumeric, underscore, dot (for schema.table)
+        import re
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_.]*$', name):
+            raise ValueError(f"Invalid identifier: {name}")
+        return name
 
     def _get_connection(self):
         # Use fresh DSQL token (auto-refreshed every 10 min)

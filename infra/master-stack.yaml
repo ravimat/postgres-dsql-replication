@@ -105,8 +105,11 @@ Resources:
                 Action:
                   - cloudwatch:PutMetricData
                   - dsql:DbConnectAdmin
-                  - secretsmanager:GetSecretValue
                 Resource: '*'
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*'
               - Effect: Allow
                 Action:
                   - s3:PutObject
@@ -121,14 +124,12 @@ Resources:
                   - !Sub ${FrontendBucket.Arn}/*
               - Effect: Allow
                 Action:
-                  - logs:*
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - ecr:GetAuthorizationToken
-                  - ecr:BatchGetImage
-                  - ecr:GetDownloadUrlForLayer
-                Resource: '*'
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ec2/${AWS::StackName}*'
+
 
   CDCInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -180,6 +181,8 @@ Resources:
           # Database connections configured via frontend dashboard
 
           # Create environment file
+          # Create .env with restricted permissions (owner-only read/write)
+          touch /opt/cdc/.env && chmod 600 /opt/cdc/.env
           cat > /opt/cdc/.env << ENVEOF
           SOURCE_DSN=""
           TARGET_DSN=""
@@ -372,7 +375,10 @@ Resources:
                   - ssm:GetCommandInvocation
                   - s3:GetObject
                   - dsql:DbConnectAdmin
-                  - logs:*
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
                 Resource: '*'
 
   MetricsLambda:
@@ -709,12 +715,22 @@ Resources:
               source_dsn = body.get('source_dsn', '')
               target_dsn = body.get('target_dsn', '')
               # Update .env file on EC2 and restart service
+              # Sanitize inputs — only allow safe characters for DSN/ARN values
+              import re
+              safe_pattern = re.compile(r'^[a-zA-Z0-9_./:=@\-\s]+$')
               cmds = []
               if source_dsn:
-                  cmds.append("sed -i 's|^SOURCE_DSN=.*|SOURCE_DSN=\"" + source_dsn + "\"|' /opt/cdc/.env")
+                  if not source_dsn.startswith('arn:aws:secretsmanager') and not safe_pattern.match(source_dsn):
+                      return response(400, {'error': 'Invalid source DSN characters'})
+                  import base64 as b64_dsn
+                  # Use base64 to safely pass the value without shell interpretation
+                  encoded = b64_dsn.b64encode(source_dsn.encode()).decode()
+                  cmds.append(f"sed -i 's|^SOURCE_DSN=.*|SOURCE_DSN='$(echo {encoded} | base64 -d)'|' /opt/cdc/.env")
               if target_dsn:
-                  cmds.append("sed -i 's|^TARGET_DSN=.*|TARGET_DSN=\"host=" + target_dsn + " port=5432 dbname=postgres user=admin sslmode=require\"|' /opt/cdc/.env")
-                  cmds.append(f"sed -i 's|^DSQL_HOSTNAME=.*|DSQL_HOSTNAME={target_dsn}|' /opt/cdc/.env")
+                  if not safe_pattern.match(target_dsn):
+                      return response(400, {'error': 'Invalid target endpoint characters'})
+                  cmds.append("sed -i 's|^TARGET_DSN=.*|TARGET_DSN=host=" + target_dsn + " port=5432 dbname=postgres user=admin sslmode=require|' /opt/cdc/.env")
+                  cmds.append("sed -i 's|^DSQL_HOSTNAME=.*|DSQL_HOSTNAME=" + target_dsn + "|' /opt/cdc/.env")
               cmds.append('systemctl restart cdc-service')
               cmd = ' && '.join(cmds)
               ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': [cmd]})
@@ -960,20 +976,24 @@ Outputs:
 
   CloudWatchDashboard:
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${CDCDashboard}
-    Description: CloudWatch Dashboard URL
+    Description: CloudWatch Metrics Dashboard
 
-  APIURL:
-    Value: !Sub https://${MetricsAPI}.execute-api.${AWS::Region}.amazonaws.com/api/metrics
-    Description: Metrics API endpoint
+  CloudWatchLogsURL:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/$252Fec2$252F${AWS::StackName}-cdc
+    Description: CloudWatch Logs for CDC service
 
   CDCInstanceId:
     Value: !Ref CDCInstance
     Description: EC2 Instance ID running the CDC service
 
-  CDCHealthEndpoint:
-    Value: !Sub http://${CDCInstance.PublicIp}:8080/health
-    Description: CDC service health check endpoint
+  CDCInstanceConsole:
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/ec2/home?region=${AWS::Region}#Instances:search=${CDCInstance}
+    Description: EC2 Instance Console Link
 
-  CloudWatchLogsURL:
-    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/$252Fec2$252F${AWS::StackName}-cdc
-    Description: CloudWatch Logs for CDC service
+  APIURL:
+    Value: !Sub https://${MetricsAPI}.execute-api.${AWS::Region}.amazonaws.com/api/metrics
+    Description: Metrics API endpoint
+
+  CDCHealthEndpoint:
+    Value: !Sub http://${CDCInstance.PrivateIp}:8080/health
+    Description: CDC service health check endpoint (private IP)

@@ -191,15 +191,25 @@ CREATE TABLE orders (
 
 You can use the existing public repository directly — no fork needed:
 
-1. **Download the template:**
+1. **Download the template** from GitHub:
    ```
    https://raw.githubusercontent.com/mathurravi23/pg-dsql-cdc/main/infra/master-stack.yaml
    ```
-   Or use this one-click link to create the stack:
+   Save the file locally (right-click → Save As, or use `curl`):
+   ```bash
+   curl -o master-stack.yaml https://raw.githubusercontent.com/mathurravi23/pg-dsql-cdc/main/infra/master-stack.yaml
+   ```
+
+2. **Deploy via CloudFormation Console:**
+   - Open **CloudFormation** → Create Stack → **Upload a template file**
+   - Upload the downloaded `master-stack.yaml`
+   - Use `GitHubRepoOwner = mathurravi23` and `GitHubRepoName = pg-dsql-cdc`
+
+3. **Or deploy via CLI:**
    ```bash
    aws cloudformation create-stack \
      --stack-name pg-dsql-cdc \
-     --template-url https://raw.githubusercontent.com/mathurravi23/pg-dsql-cdc/main/infra/master-stack.yaml \
+     --template-body file://master-stack.yaml \
      --capabilities CAPABILITY_IAM \
      --parameters ParameterKey=VpcId,ParameterValue=<your-vpc> \
                   ParameterKey=SubnetIds,ParameterValue=<your-subnet> \
@@ -207,11 +217,6 @@ You can use the existing public repository directly — no fork needed:
                   ParameterKey=GitHubRepoOwner,ParameterValue=mathurravi23 \
                   ParameterKey=GitHubRepoName,ParameterValue=pg-dsql-cdc \
      --region us-east-1
-   ```
-
-2. Or open **CloudFormation Console** → Create Stack → **Amazon S3 URL** → paste:
-   ```
-   https://raw.githubusercontent.com/mathurravi23/pg-dsql-cdc/main/infra/master-stack.yaml
    ```
 
 ### Option B: Fork the repo first (recommended for customization)
@@ -532,6 +537,94 @@ pg-dsql-cdc/
 └── api/
     └── lambda_metrics.py       # Reference Lambda code (inline in CFN template)
 ```
+
+---
+
+## Estimated Cost
+
+The following AWS resources are deployed and incur charges:
+
+| Resource | Type | Estimated Monthly Cost |
+|----------|------|----------------------:|
+| EC2 Instance | t3.medium (24/7) | ~$30 |
+| CloudFront Distribution | Low traffic | ~$1-5 |
+| S3 Buckets (2) | Frontend + Archive | ~$1-3 |
+| API Gateway | HTTP API | ~$1-3 |
+| Lambda | Proxy (low invocations) | ~$0-1 |
+| CloudWatch | Dashboard + Logs + Metrics | ~$3-10 |
+| **Total (CDC infrastructure only)** | | **~$36-52/month** |
+
+> **Note:** This does NOT include the cost of your source RDS instance or Aurora DSQL cluster — those are pre-existing resources you provision separately.
+
+> **Cost optimization:** You can stop the EC2 instance when not replicating. WAL is retained by PostgreSQL (replication slot holds it) and replication resumes from where it left off. However, accumulated WAL consumes storage on your RDS instance.
+
+---
+
+## Cleanup
+
+To completely remove the CDC solution and stop all charges:
+
+### Step 1: Stop replication and drop the slot
+
+```bash
+# Connect to your source PostgreSQL and drop the replication slot:
+psql -h <your-rds-endpoint> -U postgres -c "SELECT pg_drop_replication_slot('dsql_cdc_slot');"
+
+# Also drop load test slot if it exists:
+psql -h <your-rds-endpoint> -U postgres -c "SELECT pg_drop_replication_slot('sample_cdc_slot') FROM pg_replication_slots WHERE slot_name = 'sample_cdc_slot';"
+```
+
+> ⚠️ **Important:** Drop the replication slot BEFORE deleting the stack. If you delete the EC2 instance without dropping the slot, PostgreSQL will continue accumulating WAL indefinitely, consuming disk space on your RDS instance.
+
+### Step 2: Empty S3 buckets
+
+```bash
+# Find bucket names from stack outputs:
+aws cloudformation describe-stacks --stack-name pg-dsql-cdc --query 'Stacks[0].Outputs' --region us-east-1
+
+# Empty both buckets:
+aws s3 rm s3://pg-dsql-cdc-dashboard-<account-id> --recursive --region us-east-1
+aws s3 rm s3://pg-dsql-cdc-archive-<account-id> --recursive --region us-east-1
+```
+
+### Step 3: Delete the CloudFormation stack
+
+```bash
+aws cloudformation delete-stack --stack-name pg-dsql-cdc --region us-east-1
+```
+
+Or via Console: **CloudFormation** → Select stack → **Delete**
+
+> Stack deletion takes 15-20 minutes (CloudFront distribution global propagation + Lambda VPC ENI cleanup).
+
+### Step 4: Verify cleanup
+
+```bash
+# Confirm stack is deleted:
+aws cloudformation describe-stacks --stack-name pg-dsql-cdc --region us-east-1
+# Should return: "Stack with id pg-dsql-cdc does not exist"
+
+# Verify no replication slots remain:
+psql -h <your-rds-endpoint> -U postgres -c "SELECT slot_name, active FROM pg_replication_slots;"
+```
+
+### Optional: Remove target tables from DSQL
+
+If you no longer need the replicated data on Aurora DSQL, drop the tables manually:
+
+```sql
+-- Connect to DSQL and drop replicated tables
+DROP TABLE IF EXISTS <your_table_1>;
+DROP TABLE IF EXISTS <your_table_2>;
+-- Also drop sample tables if they exist
+DROP TABLE IF EXISTS sample_orders, sample_order_items, sample_payments, sample_shipments, sample_inventory, sample_products, sample_customers;
+```
+
+---
+
+## License
+
+This project is licensed under the MIT-0 (MIT No Attribution) License. See the [LICENSE](LICENSE) file for details.
 
 ---
 

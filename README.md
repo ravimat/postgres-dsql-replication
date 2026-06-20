@@ -8,10 +8,6 @@ A production-ready Change Data Capture (CDC) tool that replicates data from Post
 
 ![Architecture Diagram](docs/architecture.png)
 
-### AWS Services Interaction
-
-![AWS Services Interaction](docs/aws_services_interaction.png)
-
 
 ---
 
@@ -451,17 +447,6 @@ This tool replicates **DML operations only** (INSERT, UPDATE, DELETE). It does N
 
 ---
 
-## Known Issues
-
-| Issue | Workaround |
-|-------|-----------|
-| CloudWatch metrics "disabled" warning on startup | Non-fatal — CloudWatch `PutMetricData` needs correct namespace; metrics still work |
-| Checkpoint table creation warning (invalid DSN) | Non-fatal at startup if TARGET_DSN format uses just hostname; resolves once replication starts |
-| Load test output buffering | Logs appear all at once after test completes (Python stdout buffering through tee) |
-| CloudFront cache on frontend updates | Hard-refresh (Ctrl+Shift+R) or invalidate: `aws cloudfront create-invalidation --distribution-id <ID> --paths "/*"` |
-| Stack deletion takes 15-20 min | CloudFront distribution deletion is slow (global edge propagation); Lambda VPC ENI cleanup adds time |
-
----
 
 ## Manual Operations
 
@@ -553,32 +538,9 @@ The following AWS resources are deployed and incur charges:
 
 ## Cleanup
 
-To completely remove the CDC solution and stop all charges:
+To remove all resources created by this solution:
 
-### Step 1: Stop replication and drop the slot
-
-```bash
-# Connect to your source PostgreSQL and drop the replication slot:
-psql -h <your-rds-endpoint> -U postgres -c "SELECT pg_drop_replication_slot('dsql_cdc_slot');"
-
-# Also drop load test slot if it exists:
-psql -h <your-rds-endpoint> -U postgres -c "SELECT pg_drop_replication_slot('sample_cdc_slot') FROM pg_replication_slots WHERE slot_name = 'sample_cdc_slot';"
-```
-
-> ⚠️ **Important:** Drop the replication slot BEFORE deleting the stack. If you delete the EC2 instance without dropping the slot, PostgreSQL will continue accumulating WAL indefinitely, consuming disk space on your RDS instance.
-
-### Step 2: Empty S3 buckets
-
-```bash
-# Find bucket names from stack outputs:
-aws cloudformation describe-stacks --stack-name pg-dsql-cdc --query 'Stacks[0].Outputs' --region us-east-1
-
-# Empty both buckets:
-aws s3 rm s3://pg-dsql-cdc-dashboard-<account-id> --recursive --region us-east-1
-aws s3 rm s3://pg-dsql-cdc-archive-<account-id> --recursive --region us-east-1
-```
-
-### Step 3: Delete the CloudFormation stack
+### Step 1: Delete the CloudFormation stack
 
 ```bash
 aws cloudformation delete-stack --stack-name pg-dsql-cdc --region us-east-1
@@ -586,30 +548,37 @@ aws cloudformation delete-stack --stack-name pg-dsql-cdc --region us-east-1
 
 Or via Console: **CloudFormation** → Select stack → **Delete**
 
-> Stack deletion takes 15-20 minutes (CloudFront distribution global propagation + Lambda VPC ENI cleanup).
+> The stack's custom resource will automatically empty the S3 buckets before deletion. Stack deletion takes 15-20 minutes (CloudFront global propagation + Lambda VPC ENI cleanup).
 
-### Step 4: Verify cleanup
+### Step 2 (Optional): Drop the replication slot on source
 
-```bash
-# Confirm stack is deleted:
-aws cloudformation describe-stacks --stack-name pg-dsql-cdc --region us-east-1
-# Should return: "Stack with id pg-dsql-cdc does not exist"
-
-# Verify no replication slots remain:
-psql -h <your-rds-endpoint> -U postgres -c "SELECT slot_name, active FROM pg_replication_slots;"
-```
-
-### Optional: Remove target tables from DSQL
-
-If you no longer need the replicated data on Aurora DSQL, drop the tables manually:
+If you created a replication slot on your source PostgreSQL, drop it to stop WAL accumulation:
 
 ```sql
--- Connect to DSQL and drop replicated tables
-DROP TABLE IF EXISTS <your_table_1>;
-DROP TABLE IF EXISTS <your_table_2>;
--- Also drop sample tables if they exist
-DROP TABLE IF EXISTS sample_orders, sample_order_items, sample_payments, sample_shipments, sample_inventory, sample_products, sample_customers;
+-- Drop the CDC replication slot:
+SELECT pg_drop_replication_slot('dsql_cdc_slot');
+
+-- Drop the load test slot if it exists:
+SELECT pg_drop_replication_slot('sample_cdc_slot') 
+  FROM pg_replication_slots WHERE slot_name = 'sample_cdc_slot';
 ```
+
+> ⚠️ If you don't drop the replication slot, PostgreSQL will continue accumulating WAL indefinitely, consuming disk space on your RDS instance.
+
+### Step 3 (Optional): Empty S3 buckets manually (if stack delete fails)
+
+If the stack deletion fails due to non-empty buckets:
+
+```bash
+aws s3 rm s3://pg-dsql-cdc-dashboard-<account-id> --recursive --region us-east-1
+aws s3 rm s3://pg-dsql-cdc-archive-<account-id> --recursive --region us-east-1
+```
+
+Then retry the stack deletion.
+
+### Step 4 (Optional): Remove replicated data from DSQL
+
+The solution does NOT create or delete tables on your target Aurora DSQL. If you want to remove replicated data, drop tables manually on DSQL.
 
 ---
 

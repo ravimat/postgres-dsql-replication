@@ -187,10 +187,51 @@ CREATE TABLE orders (
 
 ## Deployment (One-Click CloudFormation)
 
-### Step 1: Deploy the Stack
+### Option A: Deploy directly from the public repo (quickest)
 
-1. Open **CloudFormation** → Create Stack → Upload template
-2. Upload `infra/master-stack.yaml`
+You can use the existing public repository directly — no fork needed:
+
+1. **Download the template:**
+   ```
+   https://raw.githubusercontent.com/mathurravi23/pg-dsql-cdc/main/infra/master-stack.yaml
+   ```
+   Or use this one-click link to create the stack:
+   ```bash
+   aws cloudformation create-stack \
+     --stack-name pg-dsql-cdc \
+     --template-url https://raw.githubusercontent.com/mathurravi23/pg-dsql-cdc/main/infra/master-stack.yaml \
+     --capabilities CAPABILITY_IAM \
+     --parameters ParameterKey=VpcId,ParameterValue=<your-vpc> \
+                  ParameterKey=SubnetIds,ParameterValue=<your-subnet> \
+                  ParameterKey=SecurityGroupId,ParameterValue=<your-sg> \
+                  ParameterKey=GitHubRepoOwner,ParameterValue=mathurravi23 \
+                  ParameterKey=GitHubRepoName,ParameterValue=pg-dsql-cdc \
+     --region us-east-1
+   ```
+
+2. Or open **CloudFormation Console** → Create Stack → **Amazon S3 URL** → paste:
+   ```
+   https://raw.githubusercontent.com/mathurravi23/pg-dsql-cdc/main/infra/master-stack.yaml
+   ```
+
+### Option B: Fork the repo first (recommended for customization)
+
+If you want to customize the CDC service, modify table mappings, or make code changes:
+
+1. **Fork the repository:**
+   - Go to [github.com/mathurravi23/pg-dsql-cdc](https://github.com/mathurravi23/pg-dsql-cdc)
+   - Click **Fork** → create under your GitHub account/org
+   - Your fork URL will be: `https://github.com/<your-username>/pg-dsql-cdc`
+
+2. **Deploy from your fork:**
+   - Use `GitHubRepoOwner = <your-username>` in the stack parameters
+   - The EC2 instance will `git clone` from YOUR fork
+   - Any changes you push to your fork will be picked up on next `git pull`
+
+### Deploy the Stack
+
+1. Open **CloudFormation** → Create Stack → Upload template (or use S3 URL above)
+2. Upload `infra/master-stack.yaml` (if using Option B, download from your fork)
 3. Fill in parameters:
 
 | Parameter | Description | Example |

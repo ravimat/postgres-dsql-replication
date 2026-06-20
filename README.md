@@ -576,9 +576,21 @@ aws s3 rm s3://pg-dsql-cdc-archive-<account-id> --recursive --region us-east-1
 
 Then retry the stack deletion.
 
-### Step 4 (Optional): Remove replicated data from DSQL
+### Step 4 (Optional): Remove sample load test tables from DSQL
 
-The solution does NOT create or delete tables on your target Aurora DSQL. If you want to remove replicated data, drop tables manually on DSQL.
+The load test creates `sample_*` tables on the target DSQL. To remove them:
+
+```sql
+DROP TABLE IF EXISTS sample_order_items;
+DROP TABLE IF EXISTS sample_payments;
+DROP TABLE IF EXISTS sample_shipments;
+DROP TABLE IF EXISTS sample_orders;
+DROP TABLE IF EXISTS sample_inventory;
+DROP TABLE IF EXISTS sample_products;
+DROP TABLE IF EXISTS sample_customers;
+```
+
+> **Note:** Your replicated production tables are NOT affected by cleanup — only drop them if you no longer need the data.
 
 ---
 

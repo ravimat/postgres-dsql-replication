@@ -6,30 +6,12 @@ A production-ready Change Data Capture (CDC) tool that replicates data from Post
 
 ## Architecture
 
-```
-┌─────────────────┐         ┌──────────────────────────────────────────┐
-│  Source          │         │  AWS Account                             │
-│  PostgreSQL 14+  │◄────────┤                                          │
-│  (RDS/Self-mgd)  │  WAL    │  EC2 Instance (t3.medium)                │
-└─────────────────┘  Stream  │  ┌────────────────────────────────┐      │
-                             │  │  cdc_service.py (systemd)       │      │
-                             │  │  - StreamingWALConsumer          │      │
-                             │  │  - BatchProcessor               │      │
-                             │  │  - DSQLWriter (parallel)         │      │
-                             │  │  - Health Server (:8080)         │      │
-                             │  └────────────────────────────────┘      │
-                             │              │                            │
-                             │              ▼                            │
-┌─────────────────┐         │  ┌────────────────────────────────┐      │
-│  Target          │◄────────┤  │  Aurora DSQL (IAM Auth)         │      │
-│  Aurora DSQL     │  Upsert │  └────────────────────────────────┘      │
-└─────────────────┘         │                                          │
-                             │  ┌────────────────────────────────┐      │
-                             │  │  CloudFront + S3 (Dashboard)    │      │
-                             │  │  API Gateway + Lambda (Proxy)   │      │
-                             │  └────────────────────────────────┘      │
-                             └──────────────────────────────────────────┘
-```
+![Architecture Diagram](docs/architecture.png)
+
+### AWS Services Interaction
+
+![AWS Services Interaction](docs/aws_services_interaction.png)
+
 
 ---
 
@@ -394,21 +376,30 @@ Returns:
 
 ## Data Loss Prevention
 
-This tool implements **zero data loss guarantees**:
+The following measures are implemented to minimize the risk of data loss during replication:
 
-1. **WAL feedback only after confirmed write** — PostgreSQL WAL is NOT confirmed until data is successfully written to DSQL
-2. **Safe checkpoint advancement** — Checkpoint LSN never advances past failed events
-3. **Pre-flight connectivity check** — Verifies both source and target are reachable before starting
-4. **WAL retention on pause/stop** — PostgreSQL holds WAL segments until replication resumes
+### Measures Taken
 
-### Recovery Scenarios
+1. **WAL feedback only after confirmed write** — PostgreSQL WAL position is NOT acknowledged until data is successfully written to Aurora DSQL. If the service crashes mid-batch, unacknowledged events remain in the WAL and are replayed on restart.
 
-| Scenario | Behavior |
+2. **Safe checkpoint advancement** — The checkpoint LSN does not advance past failed events. If a batch has partial failures, only the successfully written portion is checkpointed.
+
+3. **Pre-flight connectivity check** — Before starting replication, the service verifies that both source PostgreSQL and target DSQL are reachable. This prevents consuming WAL when the target is unavailable.
+
+4. **WAL retention on pause/stop** — When replication is paused or stopped, PostgreSQL retains all WAL segments in the replication slot until consumption resumes. No data is discarded during downtime.
+
+5. **Input validation and sanitization** — User inputs (DSN, table names) are validated before use in shell commands or SQL queries to prevent injection-based corruption.
+
+### Recovery Behavior
+
+| Scenario | Expected Behavior |
 |----------|----------|
-| Service crash | Restarts from last checkpoint, replays unconfirmed events |
-| DSQL unavailable | Events queue up, retried when connection restored |
-| Network partition | PostgreSQL holds WAL, resumes from last confirmed LSN |
-| Token expiration | Auto-refreshes every 10 min (token TTL: 15 min) |
+| Service crash / restart | Resumes from last saved checkpoint LSN; replays unconfirmed events |
+| DSQL temporarily unavailable | Batch write fails; events are retried on next flush cycle |
+| Network partition (source side) | PostgreSQL holds WAL in the slot; resumes from last confirmed LSN |
+| IAM token expiration | Tokens auto-refresh every 10 min (TTL: 15 min); brief failures retried |
+
+> **Note:** While these measures significantly reduce the risk of data loss, edge cases may exist in untested failure scenarios (e.g., simultaneous source and target failures, corrupted WAL segments). Users are encouraged to validate replication integrity for their specific workloads.
 
 ---
 

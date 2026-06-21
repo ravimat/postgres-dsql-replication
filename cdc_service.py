@@ -463,7 +463,7 @@ class Metrics:
             try:
                 self._cw_client = boto3.client("cloudwatch")
             except Exception:
-                logger.warning("CloudWatch client init failed, metrics disabled")
+                pass  # CW metrics optional — will retry when publishing
 
     def increment(self, counter: str, value: int = 1):
         with self._lock:
@@ -817,9 +817,15 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     import time as _time
                     with open("/opt/cdc/connectivity_status.json", "w") as f:
                         json.dump({"source_ok": True, "target_ok": True, "tested_at": int(_time.time())}, f)
-                # Log connectivity test result
+                # Log connectivity test result to separate log file
                 src_msg = results.get("source_version", results.get("source_error", "not tested"))
                 tgt_msg = results.get("target_status", results.get("target_error", "not tested"))
+                import datetime as _dt
+                log_line = f"{_dt.datetime.now(_dt.timezone.utc).isoformat()} Connectivity test: Source={'OK: '+src_msg if results.get('source_ok') else 'FAILED: '+src_msg} | Target={'OK: '+tgt_msg if results.get('target_ok') else 'FAILED: '+tgt_msg}\n"
+                try:
+                    with open("/var/log/cdc/connectivity-test.log", "a") as _lf:
+                        _lf.write(log_line)
+                except: pass
                 logger.info(f"Connectivity test: Source={'OK: '+src_msg if results.get('source_ok') else 'FAILED: '+src_msg} | Target={'OK: '+tgt_msg if results.get('target_ok') else 'FAILED: '+tgt_msg}")
                 self._json_response(200, results)
             except Exception as e:
@@ -2018,7 +2024,7 @@ class CheckpointManager:
     def __init__(self, config: CDCConfig):
         self.config = config
         self._token_manager = DSQLTokenManager(config.target_dsn)
-        self._ensure_table()
+        self._table_ensured = False
 
     def _get_dsn(self) -> str:
         return self._token_manager.get_dsn()
@@ -2039,6 +2045,9 @@ class CheckpointManager:
             logger.warning(f"Checkpoint table creation: {e}")
 
     def get_last_lsn(self) -> Optional[str]:
+        if not self._table_ensured:
+            self._ensure_table()
+            self._table_ensured = True
         try:
             with psycopg2.connect(self._get_dsn()) as conn:
                 with conn.cursor() as cur:
@@ -2052,6 +2061,9 @@ class CheckpointManager:
             return None
 
     def save_checkpoint(self, lsn: str):
+        if not self._table_ensured:
+            self._ensure_table()
+            self._table_ensured = True
         with psycopg2.connect(self._get_dsn()) as conn:
             with conn.cursor() as cur:
                 cur.execute(

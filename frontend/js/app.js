@@ -401,7 +401,7 @@ const CDC = (() => {
 
     // ─── Load Test ───────────────────────────────────────────────────────
     let loadTestTimer = null;
-    let loadTestCommandId = null;
+    let loadTestPid = null;
 
     async function startLoadTest() {
         const config = {
@@ -435,8 +435,8 @@ const CDC = (() => {
                 throw new Error(errData.error || `HTTP ${response.status}`);
             }
             const result = await response.json();
-            loadTestCommandId = result.command_id;
-            appendLog(`Test started. Command ID: ${loadTestCommandId}`, 'success');
+            loadTestPid = result.pid;
+            appendLog(`Test started (PID: ${loadTestPid})`, 'success');
 
             // Start polling for status
             loadTestTimer = setInterval(pollLoadTestStatus, 5000);
@@ -456,10 +456,10 @@ const CDC = (() => {
     }
 
     async function pollLoadTestStatus() {
-        if (!loadTestCommandId) return;
+        if (!loadTestPid) return;
 
         try {
-            const response = await fetch(`${CONFIG.apiBaseUrl}/loadtest/status?command_id=${loadTestCommandId}`);
+            const response = await fetch(`${CONFIG.apiBaseUrl}/loadtest/status`);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
 

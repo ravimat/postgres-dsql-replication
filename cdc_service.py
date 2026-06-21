@@ -606,6 +606,25 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"tables": stats}).encode())
 
+        elif self.path == "/loadtest/status":
+            # Check if load test is running (GET endpoint for polling)
+            try:
+                import subprocess
+                result = subprocess.run(["pgrep", "-f", "load_test_orders"], capture_output=True, text=True)
+                running = result.returncode == 0
+                output = ""
+                try:
+                    with open("/tmp/loadtest_output.log") as f:
+                        output = f.read()[-2000:]
+                except FileNotFoundError:
+                    pass
+                if running:
+                    self._json_response(200, {"status": "running", "output": output})
+                else:
+                    self._json_response(200, {"status": "complete", "output": output})
+            except Exception as e:
+                self._json_response(200, {"status": "unknown", "error": str(e)})
+
         elif self.path == "/ready":
             ready = self.service._is_streaming if self.service else False
             self.send_response(200 if ready else 503)
@@ -796,6 +815,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     import time as _time
                     with open("/opt/cdc/connectivity_status.json", "w") as f:
                         json.dump({"source_ok": True, "target_ok": True, "tested_at": int(_time.time())}, f)
+                # Log connectivity test result
+                src_msg = results.get("source_version", results.get("source_error", "not tested"))
+                tgt_msg = results.get("target_status", results.get("target_error", "not tested"))
+                logger.info(f"Connectivity test: Source={'OK: '+src_msg if results.get('source_ok') else 'FAILED: '+src_msg} | Target={'OK: '+tgt_msg if results.get('target_ok') else 'FAILED: '+tgt_msg}")
                 self._json_response(200, results)
             except Exception as e:
                 self._json_response(500, {"error": str(e)})
@@ -829,6 +852,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     f"2>&1 | tee /tmp/loadtest_output.log"
                 )
                 proc = subprocess.Popen(["bash", "-c", cmd], start_new_session=True)
+                logger.info(f"Load test started: duration={duration}s, orders/sec={ops}, threads={threads}, PID={proc.pid}")
                 self._json_response(200, {"status": "started", "pid": proc.pid})
             except Exception as e:
                 self._json_response(500, {"error": str(e)})

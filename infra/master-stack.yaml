@@ -142,6 +142,7 @@ Resources:
 
   CDCInstance:
     Type: AWS::EC2::Instance
+    DependsOn: LogGroup
     Properties:
       InstanceType: t3.medium
       ImageId: !Ref LatestAmiId
@@ -265,6 +266,7 @@ Resources:
 
   LogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
     Properties:
       LogGroupName: !Sub /ec2/${AWS::StackName}-cdc
       RetentionInDays: 30

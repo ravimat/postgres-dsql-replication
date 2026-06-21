@@ -199,6 +199,7 @@ Resources:
           LOG_LEVEL=INFO
           S3_BUCKET=${CDCArchiveBucket}
           CONTROL_FILE=/opt/cdc/control.json
+          REPLICATION_MODE=batch
           ENVEOF
 
           # Strip leading whitespace from .env (YAML heredoc indentation artifact)
@@ -749,6 +750,9 @@ Resources:
                   cmds.append("sed -i 's|^CONFLICT_MODE=.*|CONFLICT_MODE=" + conflict_mode + "|' /opt/cdc/.env")
               if slot_name:
                   cmds.append("sed -i 's|^SLOT_NAME=.*|SLOT_NAME=" + slot_name + "|' /opt/cdc/.env")
+              replication_mode = body.get('replication_mode')
+              if replication_mode:
+                  cmds.append("sed -i 's|^REPLICATION_MODE=.*|REPLICATION_MODE=" + replication_mode + "|' /opt/cdc/.env")
               if cmds:
                   cmds.append('systemctl restart cdc-service')
                   cmd = ' && '.join(cmds)

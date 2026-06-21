@@ -144,6 +144,14 @@
                         </select>
                     </div>
                     <div class="form-group">
+                        <label for="cfgReplicationMode">Replication Mode</label>
+                        <select id="cfgReplicationMode" class="form-input">
+                            <option value="batch">Batch Processing (parallel, higher throughput)</option>
+                            <option value="commit_order">Commit Order (sequential, strict ordering)</option>
+                        </select>
+                        <span class="form-help">Batch: parallel writes per table (faster). Commit Order: sequential apply preserving exact source commit order (slower).</span>
+                    </div>
+                    <div class="form-group">
                         <label for="cfgSlotName">Replication Slot</label>
                         <input type="text" id="cfgSlotName" class="form-input" value="" placeholder="e.g., dsql_cdc_slot">
                         <span class="form-help">PostgreSQL logical replication slot name (must already exist on source)</span>

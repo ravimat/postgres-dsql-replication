@@ -37,7 +37,7 @@ A production-ready Change Data Capture (CDC) tool that replicates data from Post
 | Resource | Description |
 |----------|-------------|
 | **VPC** | With at least one public subnet (EC2 needs internet access for git clone) |
-| **Security Group** | Allow inbound port 8080 (self-referencing for Lambda→EC2), outbound all |
+| **Security Group** | Allow inbound port 8080 (self-referencing for Lambda→EC2 health checks), outbound all. **Must allow traffic from itself on port 8080** — the Lambda (attached to same SG) calls the EC2 health server. |
 | **RDS PostgreSQL 14+** | Source database in the same VPC, with logical replication enabled |
 | **Aurora DSQL Cluster** | Target cluster (can be in any region) |
 | **Secrets Manager Secret** | Source DB credentials stored in JSON format |
@@ -332,6 +332,40 @@ Click **Apply Rules**.
 | **fail** | Error on conflict (batch fails) |
 | **last_write_wins** | Always overwrite with latest value |
 
+### Replication Mode
+
+Controls how events are applied to the target Aurora DSQL:
+
+| Mode | Description | Throughput | Ordering |
+|------|-------------|:----------:|:--------:|
+| **Batch Processing** (default) | Events are grouped by table and applied in parallel using multiple writer threads | Higher (~4x) | Intra-table: strict. Cross-table: relaxed within a batch |
+| **Commit Order** | Events are applied sequentially in a single connection, preserving the exact source commit order | Lower | Strict cross-table ordering |
+
+#### When to use each mode
+
+**Batch Processing** (recommended for most workloads):
+- Best for high-throughput replication (hundreds of events/second)
+- Events for the same table are always applied in correct order
+- Events across different tables within a single batch (~500ms window) may be applied in a different order than on the source
+- Safe when your application doesn't rely on cross-table read consistency during active replication
+
+**Commit Order** (use when strict ordering matters):
+- All events are applied to DSQL in the exact order they were committed on the source
+- Uses a single connection (no parallelism) — lower throughput
+- Required when your application reads from DSQL during replication and expects cross-table referential consistency at all times
+- Example: if a source transaction inserts into `orders` then `order_items`, Commit Order guarantees `orders` is written first
+
+#### Impact on target apply
+
+| Scenario | Batch Processing | Commit Order |
+|----------|:---------------:|:------------:|
+| INSERT into `orders` then `order_items` (same txn) | `order_items` may arrive before `orders` | `orders` always written first |
+| UPDATE `accounts` then INSERT `audit_log` (same txn) | May apply in either order | Exact source order preserved |
+| High-volume INSERTs to a single table | 4 parallel writers, high throughput | Single writer, sequential |
+| Cross-table JOIN reads during replication | Brief inconsistency possible (~500ms) | Always consistent |
+
+> **Note:** Aurora DSQL does not enforce foreign key constraints, so cross-table ordering differences in Batch mode do not cause write failures. The choice depends on your application's read-consistency requirements during active replication.
+
 ---
 
 ## Monitoring
@@ -537,6 +571,129 @@ The following AWS resources are deployed and incur charges:
 > **Note:** This does NOT include the cost of your source RDS instance or Aurora DSQL cluster — those are pre-existing resources you provision separately.
 
 > **Cost optimization:** You can stop the EC2 instance when not replicating. WAL is retained by PostgreSQL (replication slot holds it) and replication resumes from where it left off. However, accumulated WAL consumes storage on your RDS instance.
+
+---
+
+## Troubleshooting
+
+### 504 Gateway Timeout on Dashboard / API calls
+
+**Symptom:** Dashboard shows "Failed to fetch" or browser returns 504 on `/api/health` or `/api/metrics`.
+
+**Cause:** The Lambda function (VPC-attached) cannot reach the EC2 health server on port 8080.
+
+**Fix:**
+1. Ensure the Security Group allows **self-referencing inbound on port 8080**:
+   - Go to EC2 Console → Security Groups → Select your SG
+   - Inbound Rules → Add Rule:
+     - Type: Custom TCP
+     - Port: 8080
+     - Source: **the same Security Group ID** (self-referencing)
+2. Verify the EC2 instance and Lambda are in the **same security group** and **same subnet(s)**
+
+### Service crashes on startup (exit code 1)
+
+**Symptom:** `systemctl status cdc-service` shows `Failed with result 'exit-code'`.
+
+**Fix:**
+```bash
+# Check what's failing:
+sudo /usr/bin/python3.11 /opt/cdc/cdc_service.py 2>&1 | head -20
+```
+
+Common causes:
+- **Port 8080 already in use** — previous crash loop left zombie processes:
+  ```bash
+  sudo fuser -k 8080/tcp
+  sleep 2
+  sudo systemctl start cdc-service
+  ```
+- **Invalid SOURCE_DSN** — Secrets Manager ARN is wrong or IAM permission missing:
+  ```bash
+  # Test secret access:
+  set -a && source /opt/cdc/.env && set +a
+  python3.11 -c "import boto3,json,os; c=boto3.client('secretsmanager',region_name='us-east-1'); print(json.loads(c.get_secret_value(SecretId=os.environ['SOURCE_DSN'])['SecretString']).keys())"
+  ```
+- **Missing `.env` values** — check all required vars are set:
+  ```bash
+  cat /opt/cdc/.env
+  ```
+
+### Git clone fails during stack creation
+
+**Symptom:** EC2 instance has no code at `/opt/cdc/` after stack creation.
+
+**Cause:** Network not ready at boot time, or repo is private.
+
+**Fix:**
+```bash
+# SSM into the instance:
+aws ssm start-session --target <instance-id> --region <region>
+
+# Manually clone:
+cd /opt/cdc
+sudo git clone https://github.com/<owner>/<repo>.git .
+sudo python3.11 -m pip install psycopg2-binary boto3
+sudo systemctl restart cdc-service
+```
+
+### Test Connectivity fails for source
+
+**Symptom:** "Connection failed — ensure the database is running and credentials are correct"
+
+**Causes:**
+- RDS instance is stopped → start it and wait 5 min
+- Security Group doesn't allow EC2 → RDS on port 5432
+- Secret ARN is incorrect or permissions missing
+- Wrong `dbname` in secret (check actual database name)
+
+### Dashboard shows blank configuration (no values populated)
+
+**Symptom:** Step 1 fields are empty even though `.env` has values.
+
+**Causes:**
+- CDC service is not running (health endpoint unreachable)
+- Lambda getting 503 from health server → service may be in crash loop
+
+**Fix:**
+```bash
+# Verify health server is up:
+curl -s localhost:8080/health | python3 -m json.tool | head -5
+
+# If empty response, restart:
+sudo fuser -k 8080/tcp
+sudo systemctl restart cdc-service
+```
+
+### Replication running but 0 events applied
+
+**Symptom:** Health shows `streaming: true, events_applied: 0` even after inserting data.
+
+**Causes:**
+1. **Table rules don't match** — check `/opt/cdc/table_rules.json` matches your table names exactly (case-sensitive, `employees` ≠ `employee`)
+2. **Wrong replication slot** — slot may have been consumed past your changes. Check:
+   ```bash
+   psql "$SOURCE_DSN" -c "SELECT slot_name, confirmed_flush_lsn, pg_current_wal_lsn() FROM pg_replication_slots;"
+   ```
+3. **REPLICA IDENTITY not set** — table needs `ALTER TABLE x REPLICA IDENTITY FULL`
+4. **DSQL write failing silently** — check logs:
+   ```bash
+   sudo tail -50 /var/log/cdc/cdc-service.log | grep -i "error\|fail"
+   ```
+
+### Load test fails with authentication error
+
+**Symptom:** Load test output shows "password authentication failed" or DSQL token error.
+
+**Causes:**
+- `DSQL_HOSTNAME` or `DSQL_REGION` not set in `.env`
+- Source DSN quotes issue — ensure no literal `"` in the `.env` values for systemd
+
+**Fix:** Complete Step 1 (Configuration → Test Connectivity → Save) before running load test.
+
+### Stack deletion takes 15-20 minutes
+
+**Expected behavior.** CloudFront distribution deletion requires global edge propagation. Lambda VPC ENI cleanup adds additional time. No action needed — just wait.
 
 ---
 

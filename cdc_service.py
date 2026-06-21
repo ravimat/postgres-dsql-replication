@@ -216,6 +216,7 @@ class CDCConfig:
     log_level: str = "INFO"
     max_lag_bytes: int = 1_073_741_824  # 1 GB
     reconnect_max_wait: int = 60
+    replication_mode: str = "batch"  # "batch" (parallel) or "commit_order" (sequential)
 
     @staticmethod
     def _resolve_source_dsn(value):
@@ -264,6 +265,7 @@ class CDCConfig:
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
             max_lag_bytes=int(os.environ.get("MAX_LAG_BYTES", "1073741824")),
             reconnect_max_wait=int(os.environ.get("RECONNECT_MAX_WAIT", "60")),
+            replication_mode=os.environ.get("REPLICATION_MODE", "batch"),
         )
 
 # ---------------------------------------------------------------------------
@@ -1556,6 +1558,11 @@ class DSQLWriter:
         if not events:
             return 0, []
 
+        # Commit Order mode: apply events sequentially in exact source order
+        if self.config.replication_mode == "commit_order":
+            return self._apply_batch_sequential(events)
+
+        # Batch mode: group by table, apply in parallel for higher throughput
         table_groups: Dict[str, List[ChangeEvent]] = {}
         for event in events:
             table_groups.setdefault(event.fqtn, []).append(event)
@@ -1580,6 +1587,43 @@ class DSQLWriter:
                     logger.error(f"Sub-batch failed: {e}")
                     failed_events.extend(sub_batch)
 
+        return success_count, failed_events
+
+    def _apply_batch_sequential(self, events: List[ChangeEvent]) -> Tuple[int, List[ChangeEvent]]:
+        """Apply events one-by-one in exact source commit order (single connection)."""
+        conn = self._get_connection()
+        success_count = 0
+        failed_events = []
+        try:
+            with conn.cursor() as cur:
+                for event in events:
+                    try:
+                        self._apply_event(cur, event)
+                        success_count += 1
+                    except psycopg2.errors.UniqueViolation:
+                        conn.rollback()
+                        if self.config.conflict_mode == ConflictMode.FAIL:
+                            failed_events.append(event)
+                        else:
+                            success_count += 1
+                    except psycopg2.errors.SerializationFailure:
+                        conn.rollback()
+                        try:
+                            self._retry_event(conn, cur, event)
+                            success_count += 1
+                        except Exception:
+                            failed_events.append(event)
+                    except Exception as e:
+                        conn.rollback()
+                        logger.error(f"Event failed (commit_order): {e}")
+                        failed_events.append(event)
+                conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Sequential batch failed: {e}")
+            failed_events.extend(events[success_count:])
+        finally:
+            conn.close()
         return success_count, failed_events
 
     def _apply_sub_batch(self, events: List[ChangeEvent]) -> int:
@@ -2152,6 +2196,7 @@ class CDCService:
             "target_endpoint": os.environ.get("DSQL_HOSTNAME", ""),
             "batch_size": self.config.batch_size,
             "slot_name": self.config.slot_name,
+            "replication_mode": self.config.replication_mode,
         }
 
     def _merge_tables_with_rules(self, active_tables: list) -> list:

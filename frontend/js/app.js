@@ -321,9 +321,11 @@ const CDC = (() => {
         const batchInput = document.getElementById('cfgBatchSize');
         const conflictInput = document.getElementById('cfgConflictMode');
         const slotInput = document.getElementById('cfgSlotName');
+        const modeInput = document.getElementById('cfgReplicationMode');
         if (batchInput && health.batch_size) batchInput.value = health.batch_size;
         if (conflictInput && health.conflict_mode) conflictInput.value = health.conflict_mode;
         if (slotInput && health.slot_name) slotInput.value = health.slot_name;
+        if (modeInput && health.replication_mode) modeInput.value = health.replication_mode;
     }
 
     // ─── Configuration ────────────────────────────────────────────────
@@ -332,6 +334,7 @@ const CDC = (() => {
             batch_size: parseInt(document.getElementById('cfgBatchSize').value, 10),
             conflict_mode: document.getElementById('cfgConflictMode').value,
             slot_name: document.getElementById('cfgSlotName').value.trim(),
+            replication_mode: document.getElementById('cfgReplicationMode').value,
         };
 
         try {

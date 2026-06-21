@@ -313,6 +313,8 @@ const CDC = (() => {
         if (conflictInput && health.conflict_mode) conflictInput.value = health.conflict_mode;
         if (slotInput && health.slot_name) slotInput.value = health.slot_name;
         if (modeInput && health.replication_mode) modeInput.value = health.replication_mode;
+        const workersInput = document.getElementById('cfgParallelWorkers');
+        if (workersInput && health.parallel_workers) workersInput.value = health.parallel_workers;
     }
 
     // ─── Configuration ────────────────────────────────────────────────
@@ -322,6 +324,7 @@ const CDC = (() => {
             conflict_mode: document.getElementById('cfgConflictMode').value,
             slot_name: document.getElementById('cfgSlotName').value.trim(),
             replication_mode: document.getElementById('cfgReplicationMode').value,
+            parallel_workers: parseInt(document.getElementById('cfgParallelWorkers').value, 10),
         };
 
         try {

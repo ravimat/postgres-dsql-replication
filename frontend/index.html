@@ -143,6 +143,11 @@
                         <span class="form-help">Number of events per commit to target (lower = less latency, higher = more throughput)</span>
                     </div>
                     <div class="form-group">
+                        <label for="cfgParallelWorkers">Parallel Writers</label>
+                        <input type="number" id="cfgParallelWorkers" class="form-input" value="4" min="1" max="16">
+                        <span class="form-help">Number of concurrent DSQL writer threads (only used in Batch mode)</span>
+                    </div>
+                    <div class="form-group">
                         <label for="cfgConflictMode">Conflict Resolution</label>
                         <select id="cfgConflictMode" class="form-input">
                             <option value="upsert">Upsert (default)</option>

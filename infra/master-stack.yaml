@@ -43,11 +43,6 @@ Parameters:
     AllowedValues: [test_decoding, pgoutput]
     Description: Logical decoding plugin
 
-  ParallelWorkers:
-    Type: Number
-    Default: 4
-    Description: Parallel DSQL writer threads
-
   # --- Networking ---
 
   LatestAmiId:
@@ -192,7 +187,7 @@ Resources:
           DECODING_PLUGIN=${DecodingPlugin}
           CONFLICT_MODE=${ConflictMode}
           BATCH_SIZE=1000
-          PARALLEL_WORKERS=${ParallelWorkers}
+          PARALLEL_WORKERS=4
           FLUSH_INTERVAL_MS=500
           HEALTH_PORT=8080
           METRICS_ENABLED=true

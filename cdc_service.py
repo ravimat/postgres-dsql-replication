@@ -717,6 +717,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     updates["SLOT_NAME"] = data["slot_name"]
                 if data.get("replication_mode"):
                     updates["REPLICATION_MODE"] = data["replication_mode"]
+                if data.get("parallel_workers"):
+                    updates["PARALLEL_WORKERS"] = str(int(data["parallel_workers"]))
                 # Update existing lines or append
                 updated_keys = set()
                 for i, line in enumerate(env_lines):
@@ -2397,6 +2399,7 @@ class CDCService:
             "batch_size": self.config.batch_size,
             "slot_name": self.config.slot_name,
             "replication_mode": self.config.replication_mode,
+            "parallel_workers": self.config.parallel_workers,
         }
 
     def _merge_tables_with_rules(self, active_tables: list) -> list:

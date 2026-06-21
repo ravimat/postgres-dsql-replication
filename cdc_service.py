@@ -2112,11 +2112,15 @@ class LagMonitor:
                     row = cur.fetchone()
                     return int(row[0]) if row else 0
         except Exception as e:
-            logger.warning(f"Failed to check lag: {e}")
+            logger.debug(f"Lag check skipped: {e}")
             return -1
 
     def _monitor_loop(self):
         while self._running:
+            # Skip lag check if source not configured
+            if not self.config.source_dsn:
+                time.sleep(10)
+                continue
             lag = self.get_lag_bytes()
             if lag >= 0:
                 self.metrics.set_gauge("replication_lag_bytes", lag)
@@ -2238,6 +2242,11 @@ class CDCService:
                         logger.info("=" * 70)
                         logger.info("REPLICATION SESSION STOPPED: %s", datetime.now(timezone.utc).isoformat())
                         logger.info("=" * 70)
+                        # Close task-specific log handler
+                        if hasattr(self, '_current_task_handler') and self._current_task_handler:
+                            logger.removeHandler(self._current_task_handler)
+                            self._current_task_handler.close()
+                            self._current_task_handler = None
                         self._consumer.stop()
                         self._is_streaming = False
                     time.sleep(3)
@@ -2256,6 +2265,17 @@ class CDCService:
                         logger.info("=" * 70)
                         logger.info("REPLICATION SESSION STARTED: %s", datetime.now(timezone.utc).isoformat())
                         logger.info("=" * 70)
+                        # Create a new task log file for this session
+                        task_log_name = f"task-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H%M%S')}.log"
+                        task_log_path = f"/var/log/cdc/{task_log_name}"
+                        try:
+                            task_handler = logging.FileHandler(task_log_path)
+                            task_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s [%(threadName)s]: %(message)s"))
+                            logger.addHandler(task_handler)
+                            self._current_task_handler = task_handler
+                            logger.info(f"Task log: {task_log_path}")
+                        except Exception:
+                            pass
                         # Get latest checkpoint for resume
                         resume_lsn = self._processor.get_last_confirmed_lsn() or start_lsn
                         self._is_streaming = True

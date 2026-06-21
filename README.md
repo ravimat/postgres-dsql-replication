@@ -8,6 +8,10 @@ A production-ready Change Data Capture (CDC) tool that replicates data from Post
 
 ![Architecture Diagram](docs/architecture.png)
 
+### AWS Service Architecture
+
+![AWS Service Architecture](docs/AWS Service Architecture.png)
+
 
 ---
 

@@ -657,7 +657,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         elif self.path == "/table-mapping":
             try:
                 rules_data = json.loads(body)
-                # Validate structure
                 if "rules" not in rules_data or not isinstance(rules_data["rules"], list):
                     self.send_response(400)
                     self.send_header("Content-Type", "application/json")
@@ -665,13 +664,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({"error": "Invalid format. Expected: {\"rules\": [...]}"}).encode())
                     return
-
-                # Write table rules file (hot-reloaded by TableRuleEngine)
                 rules_file = os.environ.get("TABLE_RULES_FILE", "/opt/cdc/table_rules.json")
                 os.makedirs(os.path.dirname(rules_file), exist_ok=True)
                 with open(rules_file, "w") as f:
                     json.dump(rules_data, f, indent=2)
-
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self._send_cors_headers()
@@ -683,10 +679,190 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 self._send_cors_headers()
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+        elif self.path == "/config":
+            # Save replication settings to .env and restart service
+            try:
+                data = json.loads(body)
+                env_file = "/opt/cdc/.env"
+                env_lines = []
+                if os.path.exists(env_file):
+                    with open(env_file) as f:
+                        env_lines = f.readlines()
+                updates = {}
+                if data.get("batch_size"):
+                    updates["BATCH_SIZE"] = str(int(data["batch_size"]))
+                if data.get("conflict_mode"):
+                    updates["CONFLICT_MODE"] = data["conflict_mode"]
+                if data.get("slot_name"):
+                    updates["SLOT_NAME"] = data["slot_name"]
+                if data.get("replication_mode"):
+                    updates["REPLICATION_MODE"] = data["replication_mode"]
+                # Update existing lines or append
+                updated_keys = set()
+                for i, line in enumerate(env_lines):
+                    key = line.split("=", 1)[0].strip() if "=" in line else ""
+                    if key in updates:
+                        env_lines[i] = f"{key}={updates[key]}\n"
+                        updated_keys.add(key)
+                for key, val in updates.items():
+                    if key not in updated_keys:
+                        env_lines.append(f"{key}={val}\n")
+                with open(env_file, "w") as f:
+                    f.writelines(env_lines)
+                self._json_response(200, {"status": "ok", "message": "Configuration saved"})
+            except Exception as e:
+                self._json_response(500, {"error": str(e)})
+
+        elif self.path == "/dsn":
+            # Save source/target DSN to .env
+            try:
+                data = json.loads(body)
+                source_dsn = data.get("source_dsn", "")
+                target_dsn = data.get("target_dsn", "")
+                env_file = "/opt/cdc/.env"
+                env_lines = []
+                if os.path.exists(env_file):
+                    with open(env_file) as f:
+                        env_lines = f.readlines()
+                updates = {}
+                if source_dsn:
+                    updates["SOURCE_DSN"] = source_dsn
+                if target_dsn:
+                    updates["TARGET_DSN"] = f"host={target_dsn} port=5432 dbname=postgres user=admin sslmode=require"
+                    updates["DSQL_HOSTNAME"] = target_dsn
+                updated_keys = set()
+                for i, line in enumerate(env_lines):
+                    key = line.split("=", 1)[0].strip() if "=" in line else ""
+                    if key in updates:
+                        env_lines[i] = f"{key}={updates[key]}\n"
+                        updated_keys.add(key)
+                for key, val in updates.items():
+                    if key not in updated_keys:
+                        env_lines.append(f"{key}={val}\n")
+                with open(env_file, "w") as f:
+                    f.writelines(env_lines)
+                # Save connectivity status
+                import time as _time
+                with open("/opt/cdc/connectivity_status.json", "w") as f:
+                    json.dump({"source_ok": False, "target_ok": False, "tested_at": int(_time.time())}, f)
+                self._json_response(200, {"status": "ok", "message": "DSN saved"})
+            except Exception as e:
+                self._json_response(500, {"error": str(e)})
+
+        elif self.path == "/test-connection":
+            # Test source and target connectivity directly from EC2
+            try:
+                data = json.loads(body)
+                source_dsn = data.get("source_dsn", "")
+                target_dsn = data.get("target_dsn", "")
+                results = {}
+                # Test source
+                if source_dsn:
+                    try:
+                        resolved = self.service.config._resolve_source_dsn(source_dsn) if hasattr(self.service.config, '_resolve_source_dsn') else source_dsn
+                        conn = psycopg2.connect(resolved, connect_timeout=10)
+                        cur = conn.cursor()
+                        cur.execute("SELECT version()")
+                        results["source_ok"] = True
+                        results["source_version"] = cur.fetchone()[0][:80]
+                        conn.close()
+                    except Exception as e:
+                        results["source_ok"] = False
+                        results["source_error"] = str(e)[:200]
+                # Test target (DSQL)
+                if target_dsn:
+                    try:
+                        import boto3 as _boto3
+                        region = os.environ.get("DSQL_REGION", "us-east-1")
+                        dsql_client = _boto3.client("dsql", region_name=region)
+                        token = dsql_client.generate_db_connect_admin_auth_token(
+                            Hostname=target_dsn, Region=region, ExpiresIn=900
+                        )
+                        conn = psycopg2.connect(
+                            host=target_dsn, port=5432, dbname="postgres",
+                            user="admin", password=token, sslmode="require",
+                            connect_timeout=10
+                        )
+                        conn.cursor().execute("SELECT 1")
+                        conn.close()
+                        results["target_ok"] = True
+                        results["target_status"] = "DSQL connected"
+                    except Exception as e:
+                        results["target_ok"] = False
+                        results["target_error"] = str(e)[:200]
+                # Save connectivity status
+                if results.get("source_ok") and results.get("target_ok"):
+                    import time as _time
+                    with open("/opt/cdc/connectivity_status.json", "w") as f:
+                        json.dump({"source_ok": True, "target_ok": True, "tested_at": int(_time.time())}, f)
+                self._json_response(200, results)
+            except Exception as e:
+                self._json_response(500, {"error": str(e)})
+
+        elif self.path == "/loadtest":
+            # Start load test as a background process
+            try:
+                data = json.loads(body)
+                # Check connectivity status first
+                try:
+                    with open("/opt/cdc/connectivity_status.json") as f:
+                        status = json.load(f)
+                    if not status.get("source_ok") or not status.get("target_ok"):
+                        self._json_response(400, {"error": "Please run Test Connectivity first (Step 1) and ensure both source and target pass."})
+                        return
+                except (FileNotFoundError, json.JSONDecodeError):
+                    self._json_response(400, {"error": "Please run Test Connectivity first (Step 1) before starting a load test."})
+                    return
+                duration = int(data.get("duration", 300))
+                ops = int(data.get("orders_per_sec", 20))
+                threads = int(data.get("threads", 4))
+                # Start load test in background
+                import subprocess
+                cmd = (
+                    f"set -a && source /opt/cdc/.env && set +a && "
+                    f"cd /opt/cdc && "
+                    f"python3.11 -u /opt/cdc/load_test_orders.py "
+                    f"--source-dsn \"$SOURCE_DSN\" "
+                    f"--target-dsn \"host=$DSQL_HOSTNAME port=5432 dbname=postgres user=admin sslmode=require\" "
+                    f"--duration {duration} --orders-per-sec {ops} --threads {threads} "
+                    f"2>&1 | tee /tmp/loadtest_output.log"
+                )
+                proc = subprocess.Popen(["bash", "-c", cmd], start_new_session=True)
+                self._json_response(200, {"status": "started", "pid": proc.pid})
+            except Exception as e:
+                self._json_response(500, {"error": str(e)})
+
+        elif self.path == "/loadtest/status":
+            # Check if load test is running
+            try:
+                import subprocess
+                result = subprocess.run(["pgrep", "-f", "load_test_orders"], capture_output=True, text=True)
+                running = result.returncode == 0
+                output = ""
+                try:
+                    with open("/tmp/loadtest_output.log") as f:
+                        output = f.read()[-2000:]
+                except FileNotFoundError:
+                    pass
+                if running:
+                    self._json_response(200, {"status": "running", "output": output})
+                else:
+                    self._json_response(200, {"status": "complete", "output": output})
+            except Exception as e:
+                self._json_response(200, {"status": "unknown", "error": str(e)})
+
         else:
             self.send_response(404)
             self._send_cors_headers()
             self.end_headers()
+
+    def _json_response(self, code, data):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self._send_cors_headers()
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
 
     def log_message(self, format, *args):
         pass  # Suppress access logs

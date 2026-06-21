@@ -578,7 +578,7 @@ The following AWS resources are deployed and incur charges:
 
 ### 504 Gateway Timeout on Dashboard / API calls
 
-**Symptom:** Dashboard shows "Failed to fetch" or browser returns 504 on `/api/health` or `/api/metrics`.
+**Symptom:** Dashboard shows "Failed to fetch" or browser returns 504 on `/api/health`.
 
 **Cause:** The Lambda function (VPC-attached) cannot reach the EC2 health server on port 8080.
 

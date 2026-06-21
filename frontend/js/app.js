@@ -97,15 +97,9 @@ const CDC = (() => {
 
     // ─── Data Fetching ────────────────────────────────────────────────
     async function fetchMetrics() {
-        try {
-            const response = await fetch(`${CONFIG.apiBaseUrl}/metrics`);
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return await response.json();
-        } catch (err) {
-            console.error('Failed to fetch metrics:', err);
-            setConnectionStatus('error', 'API Error');
-            return null;
-        }
+        // Metrics are available via the health endpoint (no separate CloudWatch call needed)
+        // This avoids 504 timeouts when Lambda is VPC-attached without NAT/VPC endpoint
+        return null;
     }
 
     async function fetchHealth() {
@@ -125,15 +119,8 @@ const CDC = (() => {
     async function refresh() {
         const [metrics, health] = await Promise.all([fetchMetrics(), fetchHealth()]);
 
-        if (metrics) {
-            updateKPIs(metrics);
-            updateCharts(metrics);
-            updateTableStatus(metrics.tables || []);
-            updateEventLog(metrics.events || []);
-            setConnectionStatus('connected', 'Connected');
-        }
-
         if (health) {
+            setConnectionStatus('connected', 'Connected');
             updateServiceInfo(health);
             if (health.control_state) {
                 updateControlStateBadge(health.control_state);

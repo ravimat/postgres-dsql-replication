@@ -120,7 +120,7 @@ const CDC = (() => {
         const [metrics, health] = await Promise.all([fetchMetrics(), fetchHealth()]);
 
         if (health) {
-            setConnectionStatus('connected', 'Connected');
+            setConnectionStatus('connected', 'API Connected');
             updateServiceInfo(health);
             if (health.control_state) {
                 updateControlStateBadge(health.control_state);
@@ -258,10 +258,10 @@ const CDC = (() => {
             <tr>
                 <td><code>${t.name}</code></td>
                 <td><span class="badge badge-${t.errors > 0 ? 'red' : t.eventsApplied > 0 ? 'green' : 'orange'}">${t.errors > 0 ? 'errors' : t.eventsApplied > 0 ? 'active' : 'idle'}</span></td>
-                <td>${lastUpdated}</td>
                 <td>${formatNumber(t.eventsApplied || 0)}</td>
                 <td>${t.operations ? Object.entries(t.operations).map(([k,v]) => k + ':' + v).join(' ') : '--'}</td>
                 <td>${t.errors || 0}</td>
+                <td>${lastUpdated}</td>
             </tr>
         `;
     }
@@ -661,7 +661,7 @@ const CDC = (() => {
                 body: rulesJson,
             });
             const data = await resp.json();
-            if (data.status === 'applied') {
+            if (data.status === 'ok' || data.status === 'applied') {
                 alert('Table mapping rules applied! (' + (data.rules_count || '?') + ' rules). Changes take effect immediately.');
                 loadTableMapping();
             } else {

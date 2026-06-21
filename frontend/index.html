@@ -16,7 +16,7 @@
         <div class="header-right">
             <span id="connectionStatus" class="connection-status">
                 <span class="status-dot"></span>
-                <span class="status-text">Connecting...</span>
+                <span class="status-text">API Connecting...</span>
             </span>
         </div>
     </header>
@@ -87,10 +87,10 @@
                         <tr>
                             <th>Table Name</th>
                             <th>Status</th>
-                            <th>Last Updated</th>
                             <th>Events Applied</th>
                             <th>Operations</th>
                             <th>Errors</th>
+                            <th>Last Updated</th>
                         </tr>
                     </thead>
                     <tbody id="tableStatusBody">
@@ -130,9 +130,17 @@
                 <div class="card">
                     <h3>Replication Settings</h3>
                     <div class="form-group">
-                        <label for="cfgBatchSize">Batch Size</label>
+                        <label for="cfgReplicationMode">Replication Mode</label>
+                        <select id="cfgReplicationMode" class="form-input">
+                            <option value="batch">Batch Processing (parallel, higher throughput)</option>
+                            <option value="commit_order">Commit Order (sequential, strict ordering)</option>
+                        </select>
+                        <span class="form-help">Batch: parallel writes per table (faster). Commit Order: sequential apply preserving exact source commit order (slower).</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="cfgBatchSize">Commit Rate</label>
                         <input type="number" id="cfgBatchSize" class="form-input" value="" min="1" max="50000">
-                        <span class="form-help">Number of events per batch write to DSQL</span>
+                        <span class="form-help">Number of events per commit to target (lower = less latency, higher = more throughput)</span>
                     </div>
                     <div class="form-group">
                         <label for="cfgConflictMode">Conflict Resolution</label>
@@ -142,14 +150,6 @@
                             <option value="skip">Skip Conflicts</option>
                             <option value="fail">Error on Conflict</option>
                         </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="cfgReplicationMode">Replication Mode</label>
-                        <select id="cfgReplicationMode" class="form-input">
-                            <option value="batch">Batch Processing (parallel, higher throughput)</option>
-                            <option value="commit_order">Commit Order (sequential, strict ordering)</option>
-                        </select>
-                        <span class="form-help">Batch: parallel writes per table (faster). Commit Order: sequential apply preserving exact source commit order (slower).</span>
                     </div>
                     <div class="form-group">
                         <label for="cfgSlotName">Replication Slot</label>
@@ -197,7 +197,7 @@
                     </div>
                     <div class="form-group">
                         <label for="cfgRefreshInterval">Refresh Interval (seconds)</label>
-                        <input type="number" id="cfgRefreshInterval" class="form-input" value="30" min="1" max="60">
+                        <input type="number" id="cfgRefreshInterval" class="form-input" value="15" min="1" max="60">
                     </div>
                     <button class="btn btn-primary" onclick="CDC.saveConnectionSettings()">Save</button>
                 </div>

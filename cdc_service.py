@@ -1378,7 +1378,8 @@ class StreamingWALConsumer:
 
             # Send feedback only for the last confirmed (written to DSQL) LSN — zero data loss
             if self._confirmed_flush_lsn:
-                msg.cursor.send_feedback(flush_lsn=self._confirmed_flush_lsn)
+                lsn_int = int(self._confirmed_flush_lsn) if not isinstance(self._confirmed_flush_lsn, int) else self._confirmed_flush_lsn
+                msg.cursor.send_feedback(flush_lsn=lsn_int)
 
         except StopIteration:
             raise
@@ -1502,7 +1503,7 @@ class BatchProcessor:
         self.metrics.increment("batches_processed")
         # Update consumer's confirmed flush LSN for WAL feedback
         if hasattr(self, '_consumer_ref') and self._consumer_ref and self._last_confirmed_lsn:
-            self._consumer_ref._confirmed_flush_lsn = self._last_confirmed_lsn
+            self._consumer_ref._confirmed_flush_lsn = int(self._last_confirmed_lsn)
 
         elapsed = time.time() - start_time
         events_per_sec = len(batch) / elapsed if elapsed > 0 else 0

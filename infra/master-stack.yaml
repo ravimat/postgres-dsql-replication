@@ -43,11 +43,6 @@ Parameters:
     AllowedValues: [test_decoding, pgoutput]
     Description: Logical decoding plugin
 
-  BatchSize:
-    Type: Number
-    Default: 1000
-    Description: Events per batch
-
   ParallelWorkers:
     Type: Number
     Default: 4
@@ -196,7 +191,7 @@ Resources:
           SLOT_NAME=${SlotName}
           DECODING_PLUGIN=${DecodingPlugin}
           CONFLICT_MODE=${ConflictMode}
-          BATCH_SIZE=${BatchSize}
+          BATCH_SIZE=1000
           PARALLEL_WORKERS=${ParallelWorkers}
           FLUSH_INTERVAL_MS=500
           HEALTH_PORT=8080

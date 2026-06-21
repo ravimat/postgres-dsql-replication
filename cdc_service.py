@@ -216,6 +216,7 @@ class CDCConfig:
     log_level: str = "INFO"
     max_lag_bytes: int = 1_073_741_824  # 1 GB
     reconnect_max_wait: int = 60
+    max_reconnect_attempts: int = 5  # Auto-stop after N consecutive failures (0 = infinite)
     replication_mode: str = "batch"  # "batch" (parallel) or "commit_order" (sequential)
 
     @staticmethod
@@ -265,6 +266,7 @@ class CDCConfig:
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
             max_lag_bytes=int(os.environ.get("MAX_LAG_BYTES", "1073741824")),
             reconnect_max_wait=int(os.environ.get("RECONNECT_MAX_WAIT", "60")),
+            max_reconnect_attempts=int(os.environ.get("MAX_RECONNECT_ATTEMPTS", "5")),
             replication_mode=os.environ.get("REPLICATION_MODE", "batch"),
         )
 
@@ -719,6 +721,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     updates["REPLICATION_MODE"] = data["replication_mode"]
                 if data.get("parallel_workers"):
                     updates["PARALLEL_WORKERS"] = str(int(data["parallel_workers"]))
+                if data.get("max_reconnect_attempts") is not None:
+                    updates["MAX_RECONNECT_ATTEMPTS"] = str(int(data["max_reconnect_attempts"]))
                 # Update existing lines or append
                 updated_keys = set()
                 for i, line in enumerate(env_lines):
@@ -1461,19 +1465,34 @@ class StreamingWALConsumer:
     def _connect_and_stream(self):
         """Connect to source and start streaming with auto-reconnect."""
         backoff = 1
+        consecutive_failures = 0
+        max_attempts = self.config.max_reconnect_attempts
 
         while self._running:
             try:
                 self._establish_connection()
                 self._start_streaming()
                 backoff = 1  # Reset on successful connection
+                consecutive_failures = 0  # Reset on success
 
             except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
                 if not self._running:
                     break
-                logger.warning(f"Connection lost: {e}. Reconnecting in {backoff}s...")
+                consecutive_failures += 1
+                logger.warning(f"SOURCE UNREACHABLE: {e}. Attempt {consecutive_failures}/{max_attempts or 'unlimited'}. Retrying in {backoff}s...")
                 self.metrics.increment("reconnections")
-                # Sleep in 1-second increments so we can respond to stop signals quickly
+
+                # Auto-stop after max attempts
+                if max_attempts > 0 and consecutive_failures >= max_attempts:
+                    logger.error(f"SOURCE CONNECTION FAILED: {consecutive_failures} consecutive failures. Auto-stopping replication. Fix the source connection and restart from the dashboard.")
+                    # Write stopped state
+                    control_file = os.environ.get("CONTROL_FILE", "/opt/cdc/control.json")
+                    try:
+                        with open(control_file, "w") as cf:
+                            json.dump({"state": "stopped"}, cf)
+                    except: pass
+                    return
+
                 for _ in range(int(backoff)):
                     if not self._running:
                         return
@@ -1483,7 +1502,18 @@ class StreamingWALConsumer:
             except Exception as e:
                 if not self._running:
                     break
-                logger.error(f"Unexpected error in WAL consumer: {e}", exc_info=True)
+                consecutive_failures += 1
+                logger.error(f"UNEXPECTED ERROR in WAL consumer (attempt {consecutive_failures}/{max_attempts or 'unlimited'}): {e}", exc_info=True)
+
+                if max_attempts > 0 and consecutive_failures >= max_attempts:
+                    logger.error(f"REPLICATION AUTO-STOPPED: {consecutive_failures} consecutive failures. Check logs and restart from dashboard.")
+                    control_file = os.environ.get("CONTROL_FILE", "/opt/cdc/control.json")
+                    try:
+                        with open(control_file, "w") as cf:
+                            json.dump({"state": "stopped"}, cf)
+                    except: pass
+                    return
+
                 for _ in range(int(backoff)):
                     if not self._running:
                         return
@@ -1689,7 +1719,22 @@ class BatchProcessor:
             self.metrics.increment("events_failed", len(failed_events))
             if self._archiver:
                 self._archiver.send_to_dlq(failed_events, "Failed to apply to DSQL")
-            logger.warning(f"Batch: {success_count} applied, {len(failed_events)} failed")
+            # Track consecutive target failures
+            if not hasattr(self, '_consecutive_target_failures'):
+                self._consecutive_target_failures = 0
+            if success_count == 0:
+                self._consecutive_target_failures += 1
+                logger.error(f"TARGET WRITE FAILED: All {len(failed_events)} events failed (attempt {self._consecutive_target_failures}/{self.config.max_reconnect_attempts or 'unlimited'}). Error likely: DSQL unreachable.")
+                if self.config.max_reconnect_attempts > 0 and self._consecutive_target_failures >= self.config.max_reconnect_attempts:
+                    logger.error(f"TARGET CONNECTION FAILED: {self._consecutive_target_failures} consecutive batch failures. Auto-stopping replication.")
+                    control_file = os.environ.get("CONTROL_FILE", "/opt/cdc/control.json")
+                    try:
+                        with open(control_file, "w") as cf:
+                            json.dump({"state": "stopped"}, cf)
+                    except: pass
+            else:
+                self._consecutive_target_failures = 0
+                logger.warning(f"Batch: {success_count} applied, {len(failed_events)} failed")
 
         # 3. Archive to S3
         if self._archiver:
@@ -2241,6 +2286,9 @@ class CDCService:
                     if self._is_streaming:
                         logger.info("=" * 70)
                         logger.info("REPLICATION SESSION STOPPED: %s", datetime.now(timezone.utc).isoformat())
+                        logger.info("  Last confirmed LSN: %s", self._processor._last_confirmed_lsn or "none")
+                        logger.info("  Events applied: %d", self.metrics._counters.get("events_applied", 0))
+                        logger.info("  Events failed: %d", self.metrics._counters.get("events_failed", 0))
                         logger.info("=" * 70)
                         # Close task-specific log handler
                         if hasattr(self, '_current_task_handler') and self._current_task_handler:
@@ -2255,6 +2303,7 @@ class CDCService:
                     if self._is_streaming:
                         logger.info("=" * 70)
                         logger.info("REPLICATION SESSION PAUSED: %s", datetime.now(timezone.utc).isoformat())
+                        logger.info("  Last confirmed LSN: %s", self._processor._last_confirmed_lsn or "none")
                         logger.info("=" * 70)
                         self._consumer.stop()
                         self._is_streaming = False
@@ -2264,6 +2313,8 @@ class CDCService:
                     if not self._is_streaming:
                         logger.info("=" * 70)
                         logger.info("REPLICATION SESSION STARTED: %s", datetime.now(timezone.utc).isoformat())
+                        logger.info("  Resume LSN: %s", resume_lsn or "beginning")
+                        logger.info("  Checkpoint: %s", self._processor._last_confirmed_lsn or "none")
                         logger.info("=" * 70)
                         # Create a new task log file for this session
                         task_log_name = f"task-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H%M%S')}.log"
@@ -2432,6 +2483,7 @@ class CDCService:
             "slot_name": self.config.slot_name,
             "replication_mode": self.config.replication_mode,
             "parallel_workers": self.config.parallel_workers,
+            "max_reconnect_attempts": self.config.max_reconnect_attempts,
         }
 
     def _merge_tables_with_rules(self, active_tables: list) -> list:

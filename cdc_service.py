@@ -817,20 +817,32 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                         results["target_ok"] = False
                         results["target_error"] = str(e)[:200]
                 # Save connectivity status
-                if results.get("source_ok") and results.get("target_ok"):
+                source_tested = "source_ok" in results
+                target_tested = "target_ok" in results
+                source_pass = results.get("source_ok", False)
+                target_pass = results.get("target_ok", False)
+                # Save status only if both tested fields pass (or only one was tested and it passed)
+                all_tested_pass = (not source_tested or source_pass) and (not target_tested or target_pass) and (source_tested or target_tested)
+                if all_tested_pass:
                     import time as _time
                     with open("/opt/cdc/connectivity_status.json", "w") as f:
-                        json.dump({"source_ok": True, "target_ok": True, "tested_at": int(_time.time())}, f)
-                # Log connectivity test result to separate log file
-                src_msg = results.get("source_version", results.get("source_error", "not tested"))
-                tgt_msg = results.get("target_status", results.get("target_error", "not tested"))
+                        json.dump({"source_ok": source_pass, "target_ok": target_pass, "tested_at": int(_time.time())}, f)
+                # Log connectivity test result (only for tested fields)
+                log_parts = []
+                if source_tested:
+                    src_msg = results.get("source_version", results.get("source_error", "unknown"))
+                    log_parts.append(f"Source={'OK: '+src_msg if source_pass else 'FAILED: '+src_msg}")
+                if target_tested:
+                    tgt_msg = results.get("target_status", results.get("target_error", "unknown"))
+                    log_parts.append(f"Target={'OK: '+tgt_msg if target_pass else 'FAILED: '+tgt_msg}")
+                log_msg = " | ".join(log_parts) if log_parts else "No endpoints tested"
                 import datetime as _dt
-                log_line = f"{_dt.datetime.now(_dt.timezone.utc).isoformat()} Connectivity test: Source={'OK: '+src_msg if results.get('source_ok') else 'FAILED: '+src_msg} | Target={'OK: '+tgt_msg if results.get('target_ok') else 'FAILED: '+tgt_msg}\n"
+                log_line = f"{_dt.datetime.now(_dt.timezone.utc).isoformat()} Connectivity test: {log_msg}\n"
                 try:
                     with open("/var/log/cdc/connectivity-test.log", "a") as _lf:
                         _lf.write(log_line)
                 except: pass
-                logger.info(f"Connectivity test: Source={'OK: '+src_msg if results.get('source_ok') else 'FAILED: '+src_msg} | Target={'OK: '+tgt_msg if results.get('target_ok') else 'FAILED: '+tgt_msg}")
+                logger.info(f"Connectivity test: {log_msg}")
                 self._json_response(200, results)
             except Exception as e:
                 self._json_response(500, {"error": str(e)})
@@ -2090,6 +2102,9 @@ class CheckpointManager:
             logger.warning(f"Checkpoint table creation: {e}")
 
     def get_last_lsn(self) -> Optional[str]:
+        # Skip if target not configured (fresh deployment)
+        if not self.config.target_dsn:
+            return None
         if not self._table_ensured:
             self._ensure_table()
             self._table_ensured = True
@@ -2106,6 +2121,9 @@ class CheckpointManager:
             return None
 
     def save_checkpoint(self, lsn: str):
+        # Skip if target not configured
+        if not self.config.target_dsn:
+            return
         if not self._table_ensured:
             self._ensure_table()
             self._table_ensured = True

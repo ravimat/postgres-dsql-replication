@@ -8,11 +8,9 @@ Decoding plugins supported:
   - test_decoding (built-in, no extensions needed) ← DEFAULT
   - pgoutput (native PG 10+ logical replication protocol)
 
-NO external extensions required (no wal2json dependency).
-
 Key features:
   - Streaming replication connection (persistent WAL stream, not polling)
-  - True real-time (<1 second latency) via START_REPLICATION protocol
+  - True real-time via START_REPLICATION protocol
   - Automatic reconnection with exponential backoff
   - Graceful shutdown (SIGTERM/SIGINT) with clean slot state
   - Health check endpoint (HTTP /health) for ECS health checks
@@ -22,28 +20,15 @@ Key features:
   - Connection pooling for DSQL writes
   - Multi-process option for horizontal scaling (per-table sharding)
 
-Deployment options (all support 24/7):
-  1. ECS Fargate (recommended) — serverless containers, auto-restart on failure
-  2. ECS on EC2 — for predictable high throughput
-  3. EKS / Kubernetes — if you already have a cluster
-  4. EC2 with systemd — simplest for testing
-
 Environment Variables:
   SOURCE_DSN          - PostgreSQL source connection string
   TARGET_DSN          - Aurora DSQL connection string
   SLOT_NAME           - Logical replication slot name (default: dsql_cdc_slot)
-  PUBLICATION_NAME    - Publication name (default: dsql_cdc_pub)
-  DECODING_PLUGIN     - test_decoding | pgoutput (default: test_decoding)
-  S3_BUCKET           - S3 bucket for change archival (optional)
-  S3_PREFIX           - S3 key prefix (default: cdc-events/)
   CONFLICT_MODE       - upsert | skip | fail | last_write_wins (default: upsert)
-  BATCH_SIZE          - Flush after N events (default: 1000)
-  FLUSH_INTERVAL_MS   - Flush after N ms even if batch not full (default: 500)
+  COMMIT RATE          - Flush after N events (default: 1000)
   CHECKPOINT_TABLE    - Table for LSN checkpoints (default: _cdc_checkpoint)
-  TABLES              - Comma-separated tables (default: all)
+  TABLE MAPPING              - Comma-separated tables (default: all)
   PARALLEL_WORKERS    - Parallel DSQL writer threads (default: 4)
-  HEALTH_PORT         - Health check HTTP port (default: 8080)
-  METRICS_ENABLED     - Enable CloudWatch metrics (default: true)
   LOG_LEVEL           - DEBUG, INFO, WARNING, ERROR (default: INFO)
   MAX_LAG_BYTES       - Back-pressure: pause if lag exceeds this (default: 1073741824 = 1GB)
   RECONNECT_MAX_WAIT  - Max reconnect backoff seconds (default: 60)

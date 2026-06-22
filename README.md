@@ -1,6 +1,6 @@
 # PostgreSQL to Amazon Aurora DSQL — Near Real-time CDC Replicator
 
-A production-ready Change Data Capture (CDC) tool that replicates data from PostgreSQL 14+ to Amazon Aurora DSQL in near real-time using logical replication.
+Change Data Capture (CDC) tool that replicates data from PostgreSQL 14+ to Amazon Aurora DSQL in near real-time using native logical replication.
 
 ---
 
@@ -18,10 +18,9 @@ A production-ready Change Data Capture (CDC) tool that replicates data from Post
 ## Features
 
 - **Near real-time replication** — streams WAL changes with sub-second latency
-- **Zero data loss** — WAL is only confirmed after successful DSQL write
 - **Configurable conflict resolution** — upsert, skip, fail, or last_write_wins
 - **DMS-style table mapping** — include/exclude rules with `%` wildcards
-- **Secrets Manager integration** — source credentials via ARN (no plaintext passwords)
+- **Secrets Manager integration** — RDSAurora PostgreSQL source credentials via ARN (no plaintext passwords)
 - **IAM token authentication** — auto-refreshing DSQL tokens (every 10 min)
 - **Built-in load testing** — fully isolated sample tables with dedicated replication slot
 - **Web dashboard** — step-by-step configuration, monitoring, and control

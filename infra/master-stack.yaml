@@ -651,18 +651,8 @@ Outputs:
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/$252Fec2$252F${AWS::StackName}-cdc
     Description: CloudWatch Logs for CDC service
 
-  CDCInstanceId:
-    Value: !Ref CDCInstance
-    Description: EC2 Instance ID running the CDC service
-
   CDCInstanceConsole:
     Value: !Sub https://${AWS::Region}.console.aws.amazon.com/ec2/home?region=${AWS::Region}#Instances:search=${CDCInstance}
     Description: EC2 Instance Console Link
 
-  APIURL:
-    Value: !Sub https://${MetricsAPI}.execute-api.${AWS::Region}.amazonaws.com/api/metrics
-    Description: Metrics API endpoint
 
-  CDCHealthEndpoint:
-    Value: !Sub http://${CDCInstance.PrivateIp}:8080/health
-    Description: CDC service health check endpoint (private IP)

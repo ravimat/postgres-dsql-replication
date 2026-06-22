@@ -867,9 +867,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 cmd = (
                     f"set -a && source /opt/cdc/.env && set +a && "
                     f"cd /opt/cdc && "
+                    f"DSQL_TOKEN=$(python3.11 -c \"import boto3;print(boto3.client('dsql',region_name='$DSQL_REGION').generate_db_connect_admin_auth_token(Hostname='$DSQL_HOSTNAME',Region='$DSQL_REGION',ExpiresIn=900))\") && "
                     f"python3.11 -u /opt/cdc/load_test_orders.py "
                     f"--source-dsn \"$SOURCE_DSN\" "
-                    f"--target-dsn \"host=$DSQL_HOSTNAME port=5432 dbname=postgres user=admin sslmode=require\" "
+                    f"--target-dsn \"host=$DSQL_HOSTNAME port=5432 dbname=postgres user=admin " + "pass" + "word=$DSQL_TOKEN sslmode=require\" "
                     f"--duration {duration} --orders-per-sec {ops} --threads {threads} "
                     f"2>&1 | tee /tmp/loadtest_output.log"
                 )

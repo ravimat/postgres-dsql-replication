@@ -720,6 +720,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                         env_lines.append(f"{key}={val}\n")
                 with open(env_file, "w") as f:
                     f.writelines(env_lines)
+                # Reload .env into current process
+                for key, val in updates.items():
+                    os.environ[key] = val
                 self._json_response(200, {"status": "ok", "message": "Configuration saved"})
             except Exception as e:
                 self._json_response(500, {"error": str(e)})
@@ -756,7 +759,17 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 import time as _time
                 with open("/opt/cdc/connectivity_status.json", "w") as f:
                     json.dump({"source_ok": False, "target_ok": False, "tested_at": int(_time.time())}, f)
-                self._json_response(200, {"status": "ok", "message": "DSN saved"})
+                # Reload .env into current process (so health endpoint reflects new values)
+                env_file = "/opt/cdc/.env"
+                if os.path.exists(env_file):
+                    with open(env_file) as ef:
+                        for line in ef:
+                            line = line.strip()
+                            if line and not line.startswith("#") and "=" in line:
+                                key, val = line.split("=", 1)
+                                val = val.strip('"').strip("'")
+                                os.environ[key] = val
+                self._json_response(200, {"status": "ok", "message": "DSN saved. Restart service to apply new connections."})
             except Exception as e:
                 self._json_response(500, {"error": str(e)})
 
@@ -2471,7 +2484,7 @@ class CDCService:
             "events_failed": snapshot["counters"]["events_failed"],
             "uptime_seconds": snapshot["gauges"]["uptime_seconds"],
             "last_checkpoint_lsn": self._processor.get_last_confirmed_lsn(),
-            "conflict_mode": self.config.conflict_mode.value,
+            "conflict_mode": os.environ.get("CONFLICT_MODE", self.config.conflict_mode.value),
             "queue_depth": self._event_queue.qsize(),
             "control_state": self._control_manager.get_state(),
             "table_rules_count": self._rule_engine.rules_count,
@@ -2482,9 +2495,9 @@ class CDCService:
             "target_endpoint": target_display,
             "source_dsn": source_dsn_raw,
             "target_endpoint": os.environ.get("DSQL_HOSTNAME", ""),
-            "batch_size": self.config.batch_size,
-            "slot_name": self.config.slot_name,
-            "replication_mode": self.config.replication_mode,
+            "batch_size": int(os.environ.get("BATCH_SIZE", str(self.config.batch_size))),
+            "slot_name": os.environ.get("SLOT_NAME", self.config.slot_name),
+            "replication_mode": os.environ.get("REPLICATION_MODE", self.config.replication_mode),
             "parallel_workers": self.config.parallel_workers,
             "max_reconnect_attempts": self.config.max_reconnect_attempts,
         }

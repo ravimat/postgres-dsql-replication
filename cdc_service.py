@@ -2328,11 +2328,6 @@ class CDCService:
                     continue
                 else:  # running
                     if not self._is_streaming:
-                        logger.info("=" * 70)
-                        logger.info("REPLICATION SESSION STARTED: %s", datetime.now(timezone.utc).isoformat())
-                        logger.info("  Resume LSN: %s", resume_lsn or "beginning")
-                        logger.info("  Checkpoint: %s", self._processor._last_confirmed_lsn or "none")
-                        logger.info("=" * 70)
                         # Create a new task log file for this session
                         task_log_name = f"task-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H%M%S')}.log"
                         task_log_path = f"/var/log/cdc/{task_log_name}"
@@ -2346,6 +2341,11 @@ class CDCService:
                             pass
                         # Get latest checkpoint for resume
                         resume_lsn = self._processor.get_last_confirmed_lsn() or start_lsn
+                        logger.info("=" * 70)
+                        logger.info("REPLICATION SESSION STARTED: %s", datetime.now(timezone.utc).isoformat())
+                        logger.info("  Resume LSN: %s", resume_lsn or "beginning")
+                        logger.info("  Checkpoint: %s", self._processor._last_confirmed_lsn or "none")
+                        logger.info("=" * 70)
                         self._is_streaming = True
                         self._consumer._confirmed_flush_lsn = self._processor._last_confirmed_lsn or 0
                         self._processor._consumer_ref = self._consumer

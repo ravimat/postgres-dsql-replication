@@ -1,0 +1,402 @@
+CREATE TABLE public.admin_impersonate (
+    admin_usr_id bigint NOT NULL,
+    impersonatee_usr_id bigint NOT NULL,
+    start_dt timestamp(0) without time zone NOT NULL,
+    expiration_dt timestamp(0) without time zone NOT NULL,
+    cookie_id character varying(255)
+);
+ 
+-- DDL for public.geoip2_city_blocks_ipv4
+CREATE TABLE public.geoip2_city_blocks_ipv4 (
+    network_start_ip character varying(256) NOT NULL,
+    network_last_ip character varying(256) NOT NULL,
+    network_start_integer bigint NOT NULL,
+    network_last_integer bigint NOT NULL,
+    network character varying(256) NOT NULL,
+    geoname_id integer,
+    registered_country_geoname_id integer,
+    represented_country_geoname_id integer,
+    is_anonymous_proxy real NOT NULL,
+    is_satellite_provider real NOT NULL,
+    postal_code character varying(15),
+    latitude numeric(9,6),
+    longitude numeric(9,6),
+    accuracy_radius integer
+);
+ 
+-- DDL for public.geoip2_connection_blocks_ipv4
+CREATE TABLE public.geoip2_connection_blocks_ipv4 (
+    network_start_ip character varying(256) NOT NULL,
+    network_last_ip character varying(256) NOT NULL,
+    network_start_integer bigint NOT NULL,
+    network_last_integer bigint NOT NULL,
+    network character varying(256) NOT NULL,
+    connection_type character varying(25) NOT NULL
+);
+ 
+-- DDL for public.geoip2_isp_blocks_ipv4
+CREATE TABLE public.geoip2_isp_blocks_ipv4 (
+    network_start_ip character varying(256) NOT NULL,
+    network_last_ip character varying(256),
+    network_start_integer bigint,
+    network_last_integer bigint,
+    network character varying(256),
+    isp character varying(100),
+    organization character varying(100),
+    autonomous_system_number character varying(250),
+    autonomous_system_organization character varying(100)
+);
+ 
+-- DDL for public.geoip2_locations
+CREATE TABLE public.geoip2_locations (
+    geoname_id bigint NOT NULL,
+    locale_code character varying(5) NOT NULL,
+    continent_code character varying(2) NOT NULL,
+    continent_name character varying(75) NOT NULL,
+    country_iso_code character varying(2),
+    country_name character varying(165),
+    subdivision_1_iso_code character varying(100),
+    subdivision_1_name character varying(200),
+    subdivision_2_iso_code character varying(100),
+    subdivision_2_name character varying(200),
+    city_name character varying(275),
+    metro_code integer,
+    time_zone character varying(40)
+);
+ 
+-- DDL for public.ip_geolocation
+CREATE TABLE public.ip_geolocation (
+    begin_ip character varying(256) NOT NULL,
+    end_ip character varying(256) NOT NULL,
+    beginipnum bigint NOT NULL,
+    endipnum bigint NOT NULL,
+    country_cd character varying(25),
+    country_nm character varying(256)
+);
+ 
+-- DDL for public.oauth_audit_log
+CREATE TABLE public.oauth_audit_log (
+    id bigint NOT NULL,
+    oauth_code character varying(255) NOT NULL,
+    usr_id bigint,
+    email_txt character varying(64),
+    dest_url character varying(255),
+    oauth_success_cd smallint,
+    oauth_failure_cd smallint,
+    error_reason character varying(2000),
+    ip_address character varying(64),
+    browser character varying(255),
+    add_date timestamp(6) without time zone NOT NULL
+);
+ 
+-- DDL for public.auto_reg_info
+CREATE TABLE public.auto_reg_info (
+    company_name character varying(100) NOT NULL,
+    approved_emails_file character varying(100),
+    end_password character varying(15),
+    license_key character varying(500),
+    country character varying(10),
+    domain_name character varying(100),
+    error_message character varying(800),
+    enable_auth_cookie character(1),
+    secret_word character varying(100),
+    idp_connection character varying(100),
+    add_by character varying(50),
+    add_dt timestamp(0) without time zone NOT NULL,
+    update_by character varying(50),
+    update_dt timestamp(0) without time zone,
+    mark_deleted_dt timestamp(0) without time zone,
+    partneridpid character varying(100),
+    slo_flg character varying(1),
+    slo_target_url character varying(2083)
+);
+ 
+-- DDL for public.dbpropertiesnv
+CREATE TABLE public.dbpropertiesnv (
+    nv_id bigint NOT NULL,
+    name character varying(80) NOT NULL,
+    value_of character varying(3000) NOT NULL,
+    add_dt timestamp(0) without time zone NOT NULL,
+    chg_dt timestamp(0) without time zone NOT NULL
+);
+ 
+-- DDL for public.gg_ovd_guid
+CREATE TABLE public.gg_ovd_guid (
+    guid character varying(20) NOT NULL,
+    usr_id bigint NOT NULL,
+    obuiconfig character varying(250),
+    oblocationdn character varying(250),
+    obrectangle character varying(250),
+    obpsftid character varying(250),
+    obdirectreports character varying(250),
+    obindirectmanager character varying(250),
+    obuseraccountcontrol character varying(250),
+    obobjectclass character varying(250),
+    obver character varying(250),
+    oboutofofficeindicator character varying(250)
+);
+ 
+-- DDL for public.gg_usr_login
+CREATE TABLE public.gg_usr_login (
+    pk_id bigint NOT NULL,
+    usr_id bigint NOT NULL,
+    login_txt character varying(64) NOT NULL,
+    pswd_txt bytea,
+    creat_dt timestamp(0) without time zone,
+    pswd_tstp timestamp(0) without time zone,
+    mark_deleted_dt timestamp(0) without time zone,
+    stat_cd integer,
+    bcrypt_pswd_txt character varying(100)
+);
+ 
+-- DDL for public.refresh_token_status_cat
+CREATE TABLE public.refresh_token_status_cat (
+    refresh_token_status_cd integer NOT NULL,
+    refresh_token_status_desc character varying(50) NOT NULL,
+    mark_deleted_dt timestamp without time zone
+);
+ 
+-- DDL for public.ssotoolkitnv
+CREATE TABLE public.ssotoolkitnv (
+    nv_id smallint NOT NULL,
+    name character varying(40) NOT NULL,
+    value_of character varying(4000) NOT NULL,
+    add_dt timestamp(0) without time zone NOT NULL,
+    chg_dt timestamp(0) without time zone NOT NULL
+);
+ 
+-- DDL for public.usr_activity_log
+CREATE TABLE public.usr_activity_log (
+    usr_id bigint NOT NULL,
+    email_text character varying(100) NOT NULL,
+    landing_page_url character varying(1000),
+    additional_info_1 character varying(255),
+    action character varying(150),
+    source character varying(255),
+    ip_address character varying(64),
+    browser character varying(100),
+    add_date timestamp(6) without time zone NOT NULL
+);
+ 
+-- DDL for public.usr_login_attempts
+CREATE TABLE public.usr_login_attempts (
+    usr_id bigint NOT NULL,
+    attempt_tstp timestamp(6) without time zone NOT NULL,
+    platform_cd numeric(38,0) NOT NULL,
+    social_cd numeric(38,0),
+    ip_address character varying(256),
+    ref_cd character varying(100),
+    target_url character varying(500),
+    country character varying(25),
+    city character varying(275),
+    isp character varying(100),
+    connection_type character varying(50),
+    browser_txt character varying(20),
+    os_txt character varying(30),
+    lock_until_dt timestamp(0) without time zone,
+    fingerprint bigint NOT NULL,
+    source character varying(100),
+    client_id character varying(30)
+);
+ 
+-- DDL for public.usr_login_cookies
+CREATE TABLE public.usr_login_cookies (
+    usr_id bigint NOT NULL,
+    cookie_id character varying(200),
+    security_id character varying(200),
+    platform_cd integer NOT NULL,
+    add_dt timestamp(0) without time zone,
+    add_thru_cd character varying(20),
+    chng_dt timestamp(0) without time zone,
+    chng_thru_cd character varying(20),
+    fingerprint bigint NOT NULL
+);
+ 
+-- DDL for public.usr_login_refresh_token
+CREATE TABLE public.usr_login_refresh_token (
+    usr_id bigint NOT NULL,
+    cookie_id character varying(255) NOT NULL,
+    token_expiry timestamp without time zone NOT NULL,
+    platform_cd integer,
+    security_id character varying(255) NOT NULL,
+    client_id character varying(255) NOT NULL,
+    add_dt timestamp without time zone,
+    chng_dt timestamp without time zone,
+    fingerprint bigint NOT NULL,
+    refresh_token character varying(255) NOT NULL,
+    refresh_token_expiry timestamp without time zone NOT NULL,
+    status_code character varying(255) NOT NULL
+);
+ 
+-- DDL for public.usr_login_tracking_curr
+CREATE TABLE public.usr_login_tracking_curr (
+    login_tstp timestamp(0) without time zone NOT NULL,
+    usr_id bigint NOT NULL,
+    security_id character varying(200) NOT NULL,
+    last_active_tstp timestamp(0) without time zone,
+    updt_tstp timestamp(0) without time zone,
+    site_cd character varying(30),
+    mark_deleted_dt timestamp(0) without time zone,
+    logout_tstp timestamp(0) without time zone,
+    logout_type_cd smallint,
+    remote_ip character varying(32),
+    cookie_id character varying(200),
+    platform_cd numeric(38,0),
+    social_cd numeric(38,0)
+);
+ 
+-- DDL for public.usr_password_salt
+CREATE TABLE public.usr_password_salt (
+    usr_id numeric(22,0) NOT NULL,
+    password_salt character varying(64),
+    login_txt character varying(64) NOT NULL,
+    create_dt timestamp(0) without time zone
+);
+ 
+-- DDL for public.usr_security_token
+CREATE TABLE public.usr_security_token (
+    usr_id bigint NOT NULL,
+    token_value character varying(64) NOT NULL,
+    type_cd smallint NOT NULL,
+    status_cd smallint NOT NULL,
+    token_creation_date timestamp(6) without time zone,
+    token_expiration_date timestamp(6) without time zone NOT NULL,
+    token_consumed_date timestamp(6) without time zone,
+    ip_address character varying(40),
+    fingerprint bigint NOT NULL,
+    browser character varying(100)
+);
+ 
+-- DDL for public.gg_error_log
+CREATE TABLE public.gg_error_log (
+    error_log_id bigint,
+    error_timestamp timestamp(6) without time zone,
+    calling_user character varying(100),
+    "CURRENT_USER" character varying(100),
+    session_id bigint,
+    instance_id character varying(100),
+    hostname character varying(100),
+    calling_module character varying(100),
+    calling_action character varying(100),
+    error_msg character varying(2000),
+    severity_level smallint
+);
+ 
+-- DDL for public.mfa_log
+CREATE TABLE public.mfa_log (
+    id uuid,
+    mfa_token character varying(64) NOT NULL,
+    usr_id integer NOT NULL,
+    email_txt character varying(64) NOT NULL,
+    mfa_action_type character varying(20) NOT NULL,
+    response character varying(20),
+    create_dt timestamp without time zone NOT NULL,
+    mfa_platform character varying(20) NOT NULL,
+    client_id character varying(20) NOT NULL,
+    fingerprint character varying(20) NOT NULL
+);
+ 
+-- DDL for public.mfa_status
+CREATE TABLE public.mfa_status (
+    id uuid NOT NULL,
+    usr_id integer NOT NULL,
+    email_txt character varying(64) NOT NULL,
+    cookie_id character varying(200) NOT NULL,
+    auth_token character varying(200) NOT NULL,
+    mfa_issue_dt timestamp without time zone NOT NULL,
+    mfa_platform character varying(20) NOT NULL,
+    client_id character varying(20) NOT NULL,
+    fingerprint character varying(20) NOT NULL
+);
+ 
+-- DDL for public.mfa_configuration
+CREATE TABLE public.mfa_configuration (
+    id integer NOT NULL,
+    name character varying(50),
+    value jsonb,
+    config_type character varying(50),
+    enabled boolean,
+    create_by character varying(50),
+    create_dt timestamp without time zone,
+    update_by character varying(50),
+    update_dt timestamp without time zone
+);
+ 
+-- DDL for public.client_details
+CREATE TABLE public.client_details (
+    client_id character varying(30) NOT NULL,
+    client_secret character varying(50),
+    scope character varying(30),
+    authorized_grant_types character varying(100),
+    token_expiration integer,
+    authorities character varying(250),
+    platform_cd numeric(38,0),
+    user_authenticate_flg character(1),
+    jwt_support boolean
+);
+ 
+-- DDL for public.oauth_token
+CREATE TABLE public.oauth_token (
+    access_token_value character varying(150) NOT NULL,
+    refresh_token_value character varying(150),
+    user_id bigint,
+    client_id character varying(30),
+    token_expiration timestamp(0) without time zone,
+    creation_date timestamp(0) without time zone
+);
+ 
+-- DDL for public.pkce_oauth2_token
+CREATE TABLE public.pkce_oauth2_token (
+    auth_code character varying(200) NOT NULL,
+    code_challenge character varying(100) NOT NULL,
+    code_challenge_method character varying(20) NOT NULL,
+    usr_id bigint NOT NULL,
+    client_id character varying(50) NOT NULL,
+    security_id character varying(200),
+    cookie_id character varying(200) NOT NULL,
+    access_token character varying(200) NOT NULL,
+    refresh_token character varying(2000),
+    token_expiration timestamp(6) without time zone,
+    verification_tstp timestamp(6) without time zone,
+    user_uuid character varying(200)
+);
+ 
+-- DDL for public.security_oauth2_token
+CREATE TABLE public.security_oauth2_token (
+    access_token_value character varying(150) NOT NULL,
+    client_id character varying(50),
+    token_expiration timestamp(0) without time zone,
+    creation_date timestamp(0) without time zone
+);
+ 
+-- DDL for public.usr_login_token_xref
+CREATE TABLE public.usr_login_token_xref (
+    usr_id bigint NOT NULL,
+    login_tstp timestamp(0) without time zone NOT NULL,
+    security_id character varying(200) NOT NULL,
+    cookie_id character varying(200),
+    access_token_value character varying(150) NOT NULL,
+    refresh_token_expiration timestamp(0) without time zone,
+    refresh_token character varying(4000),
+    client_id character varying(50),
+    grant_type character varying(100)
+);
+ 
+-- DDL for public.usr_token
+CREATE TABLE public.usr_token (
+    usr_id bigint NOT NULL,
+    usr_email character varying(64) NOT NULL,
+    otp integer,
+    doc_id bigint,
+    doc_id_type character varying(40),
+    actual_token character varying(128) NOT NULL,
+    gartner_token character varying(64) NOT NULL,
+    token_status_cd smallint NOT NULL,
+    token_creation_date timestamp(6) without time zone,
+    token_expiration_date timestamp(6) without time zone NOT NULL,
+    token_consumed_date timestamp(6) without time zone,
+    ip_address character varying(40),
+    browser character varying(100)
+);
+ 
+
